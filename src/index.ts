@@ -18,7 +18,7 @@ const server = new McpServer(
   {
     name: "Mike_2.0",
     version: "1.0.0",
-    description: description // Description is not the system prompt
+    description: description // Remember: Description is not the system prompt
     
   },
 );

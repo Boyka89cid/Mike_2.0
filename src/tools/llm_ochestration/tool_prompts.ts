@@ -30,7 +30,7 @@ export class ToolPrompts {
     WORKFLOW: create_domain (state machine)
     Steps in order: ask_area_of_domain → ask_questions_with_this_domain → ask_scope_of_domain → extra_details → user_confirmation → generate_entries → create_domain
     ${ToolPrompts.RULES}
-    1) Guess the area_of_business from the user input if you think it is not provided and call ask_area_of_domain step with that guess to confirm with the user. Some examples of area_of_business are: "Sales", "Marketing", "Customer Support".
+    1) Guess the area_of_business from the user input if you think it is not provided and call ask_area_of_domain step with that guess to confirm with the user. Some examples of area_of_business are: 'Sales', 'Marketing', 'Customer Support'.
     2) Ask for user confirmation before proceeding to create_domain.
     3) generate_entries runs automatically after confirmation — do NOT show it to the user, immediately call this tool again with the generated knowledge_entries.
     4) If user_confirmation is false, go back to the appropriate step based on which information is missing.`;
@@ -48,6 +48,22 @@ export class ToolPrompts {
     5) Call this tool with all collected fields to insert the entry into exec_knowledge. Do NOT show the insert step to the user — immediately proceed and confirm success.`;
 
     static add_content_to_domain = `Orchestrate the process of adding content to a domain based upon user input \n${ToolPrompts.add_content_to_domain_workflow}`;
+
+    static capture_eos_hierarchy_workflow = `
+    Act as an EOS facilitator for this tool.
+    WORKFLOW: capture_eos_hierarchy (state machine)
+    Steps in order: ask_ten_year_target → ask_three_year_picture → ask_one_year_plan → ask_quarterly_rocks → ask_values → ask_functional_domains → user_confirmation → insert
+    ${ToolPrompts.RULES}
+    1) ask_ten_year_target — Ask for the North Star: 4 inputs: the big goal, key metrics, the 'why', and confidence level.
+    2) ask_three_year_picture — Ask what reality looks like if the company is on track: 5 inputs: revenue, product state, team, market position, key capabilities.
+    3) ask_one_year_plan — Ask for this year's execution layer: 4 inputs: goals, metrics, priorities, constraints. Multiple 1-year plans are allowed.
+    4) ask_quarterly_rocks — Ask for this quarter's atomic priorities: 5 inputs: title, owner, success metric, deadline, and current status for each rock.
+    5) ask_values — Ask for core values: 3 inputs: name, description, and real behavioral examples for each.
+    6) ask_functional_domains — Ask which functional areas exist in the business (e.g. Sales, Marketing, Finance). Collect as a list of names only.
+    7) user_confirmation — Show a full summary of all captured levels and ask the CEO to confirm before storing.
+    8) insert — Call this step once user_confirmation=true. `;
+
+    static capture_eos_hierarchy = `Orchestrate the process of capturing the EOS Knowledge Hierarchy based on user input.\n${ToolPrompts.capture_eos_hierarchy_workflow}`;
 }
 
 // You are an EOS(Entrepreneurial Operating System) facilitator now and not an executive brain for this tool calling.

@@ -39,7 +39,46 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
       category: z.string().optional(),
       tags: z.array(z.string()).optional(),
     })
-  })
+  }),
+  capture_eos_hierarchy: z.object({
+    session_state: z.object({
+      session_id: z.string(),
+      step: z.string().optional(),
+      ten_year_target: z.object({
+        goal: z.string(),
+        metrics: z.array(z.string()),
+        why: z.string(),
+        confidence: z.enum(["low", "medium", "high"]),
+      }).optional(),
+      three_year_picture: z.object({
+        revenue: z.string(),
+        product: z.string(),
+        team: z.string(),
+        market_position: z.string(),
+        key_capabilities: z.array(z.string()),
+      }).optional(),
+      one_year_plans: z.array(z.object({
+        goals: z.array(z.string()),
+        metrics: z.array(z.string()),
+        priorities: z.array(z.string()),
+        constraints: z.array(z.string()),
+      })).optional(),
+      quarterly_rocks: z.array(z.object({
+        title: z.string(),
+        owner: z.string(),
+        success_metric: z.string(),
+        deadline: z.string(),
+        status: z.enum(["not_started", "in_progress", "done"]),
+      })).optional(),
+      values: z.array(z.object({
+        value: z.string(),
+        description: z.string(),
+        examples: z.array(z.string()),
+      })).optional(),
+      functional_domains: z.array(z.string()).optional(),
+      user_confirmation: z.boolean().optional(),
+    })
+  }),
 };
 
 export { TOOL_SCHEMAS };

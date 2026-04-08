@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "tsx src/index.ts",
+    "inspector": "PORT=6278 npx @modelcontextprotocol/inspector tsx src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -12,9 +13,12 @@
   "type": "commonjs",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@supabase/supabase-js": "^2.101.1",
+    "dotenv": "^17.4.0",
     "express": "^5.2.1"
   },
   "devDependencies": {
-    "@modelcontextprotocol/inspector": "^0.21.1"
+    "@modelcontextprotocol/inspector": "^0.21.1",
+    "tsx": "^4.21.0"
   }
 }

@@ -13,11 +13,6 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
       }).optional(),
       extra_details: z.string().optional(),
       user_confirmation: z.boolean().optional(),
-      knowledge_entries: z.array(z.object({
-        content: z.string(),
-        category: z.string(),
-        tags: z.array(z.string()),
-      })).optional(),
     })
   }),
   read_domain: z.object({

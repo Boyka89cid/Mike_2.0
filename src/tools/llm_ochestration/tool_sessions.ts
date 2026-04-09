@@ -18,12 +18,6 @@ export type ReadDomainSessionState = {
   chunks_used?: string[];
 };
 
-export type KnowledgeEntry = {
-  content: string;
-  category: string;
-  tags: string[];
-};
-
 export type CreateDomainSessionState = {
   session_id: string;
   step?: string;
@@ -32,7 +26,6 @@ export type CreateDomainSessionState = {
   scope_of_domain?: { covers: string[], not_covers: string[]};
   extra_details?: string;
   user_confirmation?: boolean;
-  knowledge_entries?: KnowledgeEntry[];
 };
 
 export type PendingQuestion = {

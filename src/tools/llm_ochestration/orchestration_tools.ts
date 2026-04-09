@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SupabaseAdapter } from "../../adapter/supabase_adapter.ts";
 import { EmbeddingAdapter } from "../../adapter/embedding_adapter.ts";
@@ -8,6 +9,31 @@ import { ToolPrompts } from "./tool_prompts.ts";
 import { GenerationPrompts } from "./generation_prompts.ts";
 import { globalState } from "../../index.ts";
 import { TOOL_SCHEMAS } from "./tool_input_schemas.ts";
+
+async function generateAdditionalQuestions(params: {
+  area_of_business: string;
+  questions_with_this_domain: string[];
+  scope_of_domain: { covers: string[]; not_covers: string[] };
+  extra_details: string;
+}): Promise<string[]> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const prompt = GenerationPrompts.generate_additional_questions({
+    area_of_business: params.area_of_business,
+    questions_with_this_domain: params.questions_with_this_domain,
+    covers: params.scope_of_domain.covers,
+    not_covers: params.scope_of_domain.not_covers,
+    extra_details: params.extra_details,
+  });
+  const message = await client.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 2048,
+    system: GenerationPrompts.generate_additional_questions_system(),
+    messages: [{ role: "user", content: prompt }],
+  });
+  const text = (message.content[0] as Anthropic.TextBlock).text ?? "[]";
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  return jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+}
 
 export function registerOrchestrationTools(mcp: McpServer) {
     const orchestrationTools = new OrchestrationTools();
@@ -34,6 +60,7 @@ export function registerOrchestrationTools(mcp: McpServer) {
 const ADD_CONTENT_SESSIONS: Record<string, AddContentSessionState> = {};
 const ADD_CONTENT_QUESTION_CACHE: Record<string, import("./tool_sessions.ts").PendingQuestion[]> = {};
 const CREATE_DOMAIN_SESSIONS: Record<string, CreateDomainSessionState> = {};
+const CREATE_DOMAIN_SERVER_STATE: Record<string, { generated_questions?: string[] }> = {};
 const READ_DOMAIN_SESSIONS: Record<string, ReadDomainSessionState> = {};
 const CAPTURE_EOS_HIERARCHY_SESSIONS: Record<string, CaptureEosHierarchySessionState> = {};
 const EOS_EXISTENCE_CHECKED = new Set<string>(); // tracks exec_ids already checked this server session
@@ -309,7 +336,7 @@ class OrchestrationTools {
         };
     }
     const decideStep = (s: CreateDomainSessionState): string => {
-        if (!s.area_of_business) 
+        if (!s.area_of_business)
           return CreateDomainSteps.ASK_AREA_OF_DOMAIN;
         if (!s.questions_with_this_domain || s.questions_with_this_domain.length === 0)
           return CreateDomainSteps.ASK_QUESTIONS_WITH_THIS_DOMAIN;
@@ -321,21 +348,14 @@ class OrchestrationTools {
           return CreateDomainSteps.USER_CONFIRMATION;
         if (s.user_confirmation === false)
           return CreateDomainSteps.ASK_AREA_OF_DOMAIN;
-        if (s.user_confirmation === true && (!s.knowledge_entries || s.knowledge_entries.length === 0))
+        // Check server-side state — generated_questions never pass through Claude's context
+        if (!CREATE_DOMAIN_SERVER_STATE[session_state.session_id]?.generated_questions)
           return CreateDomainSteps.GENERATE_ENTRIES;
         return CreateDomainSteps.CREATE_DOMAIN;
-    }
+    };
 
-    // Use provided session_id or generate a new one if not provided
-    // Retrieve existing session or create a new one
     const existing = CREATE_DOMAIN_SESSIONS[session_state.session_id] ?? {
         session_id: session_state.session_id,
-        area_of_business: undefined,
-        questions_with_this_domain: undefined,
-        scope_of_domain: undefined,
-        extra_details: undefined,
-        user_confirmation: undefined,
-        knowledge_entries: undefined,
         step: CreateDomainSteps.ASK_AREA_OF_DOMAIN,
       };
 
@@ -402,56 +422,51 @@ class OrchestrationTools {
         }
     }
     if (session.step === CreateDomainSteps.GENERATE_ENTRIES) {
-        return {
-            status: CreateDomainSteps.GENERATE_ENTRIES,
-            generation: GenerationPrompts.generate_knowledge_entries({
+        try {
+            const questions = await generateAdditionalQuestions({
                 area_of_business: session.area_of_business ?? "",
                 questions_with_this_domain: session.questions_with_this_domain ?? [],
-                covers: session.scope_of_domain?.covers ?? [],
-                not_covers: session.scope_of_domain?.not_covers ?? [],
+                scope_of_domain: session.scope_of_domain ?? { covers: [], not_covers: [] },
                 extra_details: session.extra_details ?? "",
-            }),
-        };
+            });
+            CREATE_DOMAIN_SERVER_STATE[session.session_id] = { generated_questions: questions };
+            return {
+                status: CreateDomainSteps.GENERATE_ENTRIES,
+                questions_generated: questions.length,
+                message: `Generated ${questions.length} additional questions for this domain. Call this tool again immediately to create the domain.`,
+            };
+        } catch (e: any) {
+            return { status: "error", message: `Failed to generate additional questions: ${e.message}` };
+        }
     }
 
     if (session.step === CreateDomainSteps.CREATE_DOMAIN) {
-        // Generate a valid domain_slug that satisfies DB constraint for URL friendly:
-        // ^[a-z0-9][a-z0-9_-]*[a-z0-9]$
-
         const slug = (session.area_of_business ?? "")
-          .toLowerCase() 
-          // Convert all characters to lowercase (constraint allows only a-z, 0-9)
-
+          .toLowerCase()
           .replace(/[^a-z0-9\s_-]/g, "")
-          // Remove all invalid characters
-          // Keeps only:
-          // - lowercase letters (a-z)
-          // - digits (0-9)
-          // - space (for now, will convert next)
-          // - underscore (_) and hyphen (-)
-
           .replace(/\s+/g, "_")
-          // Replace one or more spaces with a single underscore (_)
-
           .replace(/^[_-]+|[_-]+$/g, "");
-          // Remove leading or trailing underscores (_) or hyphens (-)
-          // Ensures slug starts and ends with [a-z0-9]
 
+        const generatedQuestions = CREATE_DOMAIN_SERVER_STATE[session.session_id]?.generated_questions ?? [];
+        const allQuestions = [...(session.questions_with_this_domain ?? []), ...generatedQuestions];
 
-        // Final value to insert into DB as domain_slug
         const result = await this.helper.create_domain(this.adapter, {
             exec_id: globalState.executive_name!,
             domain_slug: slug,
             area_of_business: session.area_of_business ?? "",
             scope_of_domain: session.scope_of_domain ?? { covers: [], not_covers: [] },
-            questions_with_this_domain: session.questions_with_this_domain ?? [],
+            questions_with_this_domain: allQuestions,
             extra_details: session.extra_details ? [session.extra_details] : [],
-            knowledge_entries: session.knowledge_entries ?? [],
+            knowledge_entries: [],
         });
+
+        delete CREATE_DOMAIN_SESSIONS[session_state.session_id];
+        delete CREATE_DOMAIN_SERVER_STATE[session_state.session_id];
+
         return {
             status: CreateDomainSteps.CREATE_DOMAIN,
             message: `Created domain successfully with the following details:\n ${result}. Also give the summary of the domain details back to user`
-        }
+        };
     }
     return {
         status: "completed",

@@ -12,32 +12,29 @@ export class GenerationPrompts {
         return `Based on the ${area_of_business}, example questions, and scope of the domain, generate any extra details that can help better understand this domain`;
     }
 
-    static generate_knowledge_entries(params: {
+    static generate_additional_questions_system(): string {
+        return `You are an expert executive interviewer designing questions for a knowledge capture system. Your job is to generate deep, insightful interview questions that surface an executive's institutional knowledge, mental models, and decision-making philosophy about a specific business domain.
+        A good question:
+        - Draws out personal opinion, hard-won experience, or a decision the executive had to make — not textbook facts
+        - Is open-ended and makes the executive pause and reflect before answering
+        - Covers one of these angles: operational (how we do X), strategic (why we do X), definitional (what is X), or contextual (history, philosophy, trade-offs)
+        - Is concise — one sentence
+        Output format: Return ONLY a valid JSON array of 20 question strings. No markdown, no explanation, no preamble.`;
+    }
+
+    static generate_additional_questions(params: {
         area_of_business: string,
         questions_with_this_domain: string[],
         covers: string[],
         not_covers: string[],
         extra_details: string,
     }): string {
-        return `Based on the following domain information, generate structured knowledge entries for the table exec_knowledge in DB.
-        Area of Business: ${params.area_of_business}
-        Example Questions: ${params.questions_with_this_domain.join(", ")}
-        Scope - Covers: ${params.covers.join(", ")}
-        Scope - Does NOT Cover: ${params.not_covers.join(", ")}
-        Extra Details: ${params.extra_details}
-
-        Generate a JSON array for knowledge_entries. Each entry must have:
-        - content: string — a meaningful, contextual sentence about this domain
-        - category: string — infer the most accurate category based on the nature of the content (e.g. 'framework' for structural rules, 'faq' for questions, 'decision' for choices made, 'style' for tone or approach, 'eos_goal' for company goals)
-        - tags: string[] — include the domain slug and relevant keywords
-        Required entries:
-
-        1. An entry summarizing what the domain covers
-        2. An entry for what it does NOT cover (only if not_covers is non-empty)
-        3. One entry per example question
-        4. An entry for extra_details (only if non-empty)
-
-        Do NOT show this to the user. Immediately call this tool again with the generated knowledge_entries in session_state.`;
+        return `Domain: ${params.area_of_business}
+        Scope covers: ${params.covers.join(", ")}
+        Scope does NOT cover: ${params.not_covers.join(", ")}
+        Already collected questions — do NOT repeat these: ${params.questions_with_this_domain.join(", ")}
+        Additional context: ${params.extra_details}
+        Generate 20 additional questions.`;
     }
 
     // ─── EOS Knowledge Hierarchy ─────────────────────────────────────────────

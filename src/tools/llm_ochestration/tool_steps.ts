@@ -29,9 +29,22 @@ export type CreateDomainSteps = (typeof CreateDomainSteps)[keyof typeof CreateDo
 
 export const AddContentSteps = {
   ASK_DISPLAY_NAME: "ask_display_name",
-  ASK_CONTENT: "ask_content",
-  ASK_CATEGORY: "ask_category",
-  INSERT: "insert",
+  FETCH_QUESTIONS: "fetch_questions",
+  ASK_ANSWERS: "ask_answers",
+  SAVE_ANSWER: "save_answer",
 } as const;
 
 export type AddContentSteps = (typeof AddContentSteps)[keyof typeof AddContentSteps];
+
+export const CaptureEosHierarchySteps = {
+  ASK_TEN_YEAR_TARGET:   "ask_ten_year_target",
+  ASK_THREE_YEAR_PICTURE: "ask_three_year_picture",
+  ASK_ONE_YEAR_PLAN:     "ask_one_year_plan",
+  ASK_QUARTERLY_ROCKS:   "ask_quarterly_rocks",
+  ASK_VALUES:            "ask_values",
+  ASK_FUNCTIONAL_DOMAINS: "ask_functional_domains",
+  USER_CONFIRMATION:     "user_confirmation",
+  INSERT:                "insert",          // storage destination TBD
+} as const;
+
+export type CaptureEosHierarchySteps = (typeof CaptureEosHierarchySteps)[keyof typeof CaptureEosHierarchySteps];

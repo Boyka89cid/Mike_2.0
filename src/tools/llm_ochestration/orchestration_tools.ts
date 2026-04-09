@@ -2,8 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SupabaseAdapter } from "../../adapter/supabase_adapter.ts";
 import { EmbeddingAdapter } from "../../adapter/embedding_adapter.ts";
 import { SupabaseHelperFxns } from "../supabase_helper_fxns.ts";
-import { AddContentSteps, CreateDomainSteps, ReadDomainSteps } from "./tool_steps.ts";
-import type { AddContentSessionState, CreateDomainSessionState, ReadDomainSessionState } from "./tool_sessions.ts";
+import { AddContentSteps, CaptureEosHierarchySteps, CreateDomainSteps, ReadDomainSteps } from "./tool_steps.ts";
+import type { AddContentSessionState, CaptureEosHierarchySessionState, CreateDomainSessionState, ReadDomainSessionState } from "./tool_sessions.ts";
 import { ToolPrompts } from "./tool_prompts.ts";
 import { GenerationPrompts } from "./generation_prompts.ts";
 import { globalState } from "../../index.ts";
@@ -32,8 +32,11 @@ export function registerOrchestrationTools(mcp: McpServer) {
 }
 
 const ADD_CONTENT_SESSIONS: Record<string, AddContentSessionState> = {};
+const ADD_CONTENT_QUESTION_CACHE: Record<string, import("./tool_sessions.ts").PendingQuestion[]> = {};
 const CREATE_DOMAIN_SESSIONS: Record<string, CreateDomainSessionState> = {};
 const READ_DOMAIN_SESSIONS: Record<string, ReadDomainSessionState> = {};
+const CAPTURE_EOS_HIERARCHY_SESSIONS: Record<string, CaptureEosHierarchySessionState> = {};
+const EOS_EXISTENCE_CHECKED = new Set<string>(); // tracks exec_ids already checked this server session
 
 class OrchestrationTools {
   private adapter: SupabaseAdapter;
@@ -54,17 +57,13 @@ class OrchestrationTools {
 
     const decideStep = (s: AddContentSessionState): string => {
       if (!s.display_name) return AddContentSteps.ASK_DISPLAY_NAME;
-      if (!s.content) return AddContentSteps.ASK_CONTENT;
-      if (!s.category) return AddContentSteps.ASK_CATEGORY;
-      return AddContentSteps.INSERT;
+      if (s.current_question_index === undefined) return AddContentSteps.FETCH_QUESTIONS;
+      if (!s.answer) return AddContentSteps.ASK_ANSWERS;
+      return AddContentSteps.SAVE_ANSWER;
     };
 
     const existing = ADD_CONTENT_SESSIONS[session_state.session_id] ?? {
       session_id: session_state.session_id,
-      display_name: undefined,
-      content: undefined,
-      category: undefined,
-      tags: [],
     };
 
     const session: AddContentSessionState = {
@@ -76,19 +75,17 @@ class OrchestrationTools {
     session.step = decideStep(session);
     ADD_CONTENT_SESSIONS[session_state.session_id] = session;
 
-    if (session.step === AddContentSteps.ASK_DISPLAY_NAME) { 
-      // LIMIT is 10 for now
+    if (session.step === AddContentSteps.ASK_DISPLAY_NAME) {
       const available = await this.helper.listDomains(this.adapter, globalState.executive_name!);
       return {
         session_id: session.session_id,
         status: AddContentSteps.ASK_DISPLAY_NAME,
         widget: "use your ask_user_input_v0 widget for single_select option in the inline-chat response",
-        some_available_display_names: available,
-        message: `Which display name would you like to add content to? Use list_domains tool if you want to see all available domains.`,
+        message: `Which domain would you like to answer questions for? Available domains are: ${available}`,
       };
     }
 
-    if (session.step === AddContentSteps.ASK_CONTENT) {
+    if (session.step === AddContentSteps.FETCH_QUESTIONS) {
       const exec_id = globalState.executive_name!;
       const domain_slug = await this.helper.get_domain_slug_by_display_name(this.adapter, exec_id, session.display_name!);
       if (!domain_slug) {
@@ -97,67 +94,90 @@ class OrchestrationTools {
           session_id: session.session_id,
           status: "domain_not_found",
           action: "call_create_domain",
-          message: `The domain_slug for the display name: '${session.display_name}' does not exist. Exit this orchestration and immediately call the create_domain tool to set it up, passing area_of_business as '${session.display_name}'.`,
+          message: `The domain '${session.display_name}' does not exist. Exit this orchestration and immediately call the create_domain tool with area_of_business as '${session.display_name}'.`,
         };
       }
-      return {
-        session_id: session.session_id,
-        status: AddContentSteps.ASK_CONTENT,
-        message: `What content or insight would you like to add to the '${session.display_name}' domain?`,
-      };
-    }
 
-    if (session.step === AddContentSteps.ASK_CATEGORY) {
-      return {
-        session_id: session.session_id,
-        status: AddContentSteps.ASK_CATEGORY,
-        widget: "use your ask_user_input_v0 widget for single_select option in the inline-chat response, but also allow the user to type a custom category",
-        suggested_categories: ["decision", "faq", "framework", "style", "eos_goal", "quarterly_goal"],
-        message: "What category does this content belong to? You can pick from the suggestions or enter your own.",
-      };
-    }
-
-    if (session.step === AddContentSteps.INSERT) {
-      const exec_id = globalState.executive_name!;
-      const domain_slug = await this.helper.get_domain_slug_by_display_name(this.adapter, exec_id, session.display_name!);
-      if (!domain_slug) {
+      const questions = await this.helper.get_unanswered_questions(this.adapter, exec_id, domain_slug);
+      if (questions.length === 0) {
         delete ADD_CONTENT_SESSIONS[session_state.session_id];
         return {
           session_id: session.session_id,
-          status: "domain_not_found",
-          action: "call_create_domain",
-          message: `The domain_slug for the display name: '${session.display_name}' does not exist. Exit this orchestration and immediately call the create_domain tool to set it up, passing area_of_business as '${session.display_name}'.`,
+          status: "completed",
+          message: `No unanswered questions found for the '${session.display_name}' domain.`,
         };
       }
+
+      // Store all questions in server-side cache, only track index in session
+      ADD_CONTENT_QUESTION_CACHE[session_state.session_id] = questions;
+      session.domain_slug = domain_slug;
+      session.current_question_index = 0;
+      ADD_CONTENT_SESSIONS[session_state.session_id] = session;
+
+      const first = questions[0];
+      return {
+        session_id: session.session_id,
+        status: AddContentSteps.ASK_ANSWERS,
+        progress: `Question 1 of ${questions.length}`,
+        category: first.category,
+        message: first.question,
+      };
+    }
+
+    // Game loop: ASK → SAVE → ASK → SAVE ...
+    const questions = ADD_CONTENT_QUESTION_CACHE[session_state.session_id];
+    const idx = session.current_question_index!;
+    const current = questions[idx];
+
+    if (session.step === AddContentSteps.ASK_ANSWERS) {
+      return {
+        session_id: session.session_id,
+        status: AddContentSteps.ASK_ANSWERS,
+        progress: `Question ${idx + 1} of ${questions.length}`,
+        category: current.category,
+        message: current.question,
+      };
+    }
+
+    if (session.step === AddContentSteps.SAVE_ANSWER) {
       const embeddingAdapter = new EmbeddingAdapter();
       try {
-        await this.helper.add_knowledge_entry(
-          this.adapter,
-          embeddingAdapter,
-          exec_id,
-          domain_slug,
-          {
-            content: session.content!,
-            category: session.category!,
-            tags: session.tags ?? [],
-          }
-        );
+        await this.helper.save_question_answer(this.adapter, embeddingAdapter, current.id, session.answer!);
       } catch (e: any) {
         return {
           session_id: session.session_id,
           status: "error",
-          message: `Failed to add content: ${e.message}`,
+          message: `Failed to save answer: ${e.message}`,
         };
       }
-      delete ADD_CONTENT_SESSIONS[session_state.session_id];
+
+      const nextIdx = idx + 1;
+      if (nextIdx >= questions.length) {
+        delete ADD_CONTENT_SESSIONS[session_state.session_id];
+        delete ADD_CONTENT_QUESTION_CACHE[session_state.session_id];
+        return {
+          session_id: session.session_id,
+          status: "completed",
+          message: `All questions for '${session.display_name}' have been answered.`,
+        };
+      }
+
+      session.current_question_index = nextIdx;
+      session.answer = undefined;
+      ADD_CONTENT_SESSIONS[session_state.session_id] = session;
+
+      const next = questions[nextIdx];
       return {
         session_id: session.session_id,
-        status: AddContentSteps.INSERT,
-        message: `Content added successfully to the '${session.display_name}' domain under category '${session.category}'.`,
+        status: AddContentSteps.SAVE_ANSWER,
+        saved: true,
+        progress: `Question ${nextIdx + 1} of ${questions.length}`,
+        category: next.category,
+        message: `Answer saved. Call this tool again immediately to ask the next question.`,
       };
     }
 
-    return { status: "completed", message: "Add content process completed." };
+    return { status: "error", message: "Unknown step." };
   }
 
   async read_domain(session_state: ReadDomainSessionState): Promise<Record<string, any>> {
@@ -438,5 +458,157 @@ class OrchestrationTools {
         message: "Create domain process completed."
     };
 
-  } 
+  }
+
+  async capture_eos_hierarchy(session_state: CaptureEosHierarchySessionState): Promise<Record<string, any>> {
+    if (!session_state?.session_id) {
+      return {
+        status: "error",
+        message: `Missing session_id in session_state ${JSON.stringify(session_state)}.`,
+      };
+    }
+
+    const exec_id = globalState.executive_name!;
+    if (!EOS_EXISTENCE_CHECKED.has(exec_id)) {
+      EOS_EXISTENCE_CHECKED.add(exec_id);
+      const eosExists = await this.helper.eos_profile_exists(this.adapter, exec_id);
+      if (eosExists) {
+        return {
+          status: "already_exists",
+          message: "An EOS profile already exists for this executive.",
+        };
+      }
+    }
+
+    const decideStep = (s: CaptureEosHierarchySessionState): string => {
+      if (!s.ten_year_target)                                         return CaptureEosHierarchySteps.ASK_TEN_YEAR_TARGET;
+      if (!s.three_year_picture)                                      return CaptureEosHierarchySteps.ASK_THREE_YEAR_PICTURE;
+      if (!s.one_year_plans || s.one_year_plans.length === 0)         return CaptureEosHierarchySteps.ASK_ONE_YEAR_PLAN;
+      if (!s.quarterly_rocks || s.quarterly_rocks.length === 0)       return CaptureEosHierarchySteps.ASK_QUARTERLY_ROCKS;
+      if (!s.values || s.values.length === 0)                         return CaptureEosHierarchySteps.ASK_VALUES;
+      if (!s.functional_domains || s.functional_domains.length === 0) return CaptureEosHierarchySteps.ASK_FUNCTIONAL_DOMAINS;
+      if (s.user_confirmation === undefined)                          return CaptureEosHierarchySteps.USER_CONFIRMATION;
+      if (s.user_confirmation === false)                              return CaptureEosHierarchySteps.ASK_TEN_YEAR_TARGET;
+      return CaptureEosHierarchySteps.INSERT;
+    };
+
+    const existing = CAPTURE_EOS_HIERARCHY_SESSIONS[session_state.session_id] ?? {
+      session_id: session_state.session_id,
+    };
+
+    const session: CaptureEosHierarchySessionState = {
+      ...existing,
+      ...Object.fromEntries(Object.entries(session_state).filter(([_, v]) => v !== undefined && v !== null)),
+      session_id: session_state.session_id,
+    };
+
+    session.step = decideStep(session);
+    CAPTURE_EOS_HIERARCHY_SESSIONS[session_state.session_id] = session;
+
+    if (session.step === CaptureEosHierarchySteps.ASK_TEN_YEAR_TARGET) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.ASK_TEN_YEAR_TARGET,
+        widget: "use your ask_user_input_v0 widget with multi_select for required fields and single_select (high | medium | low) for confidence field in the inline-chat response, decompose into mulitple turns if seperate blocks exceeed 3",
+        generation: GenerationPrompts.generate_ten_year_target_draft(globalState.executive_name!),
+        message: "Only after completing the generation, ask the user to define their 10 year North Star target — 4 seperate input blocks as following: goal, key metrics related to the goal, the 'why' factor of the goal, and confidence level.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.ASK_THREE_YEAR_PICTURE) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.ASK_THREE_YEAR_PICTURE,
+        widget: "use your ask_user_input_v0 widget with multi_select for required fields in the inline-chat response, decompose into mulitple turns if seperate blocks exceeed 3",
+        generation: GenerationPrompts.generate_three_year_picture_draft(),
+        message: "Only after completing the generation, ask the user to describe their 3 year picture — 5 seperate input blocks as following: revenue, product, team, your market position, and your key capabilities.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.ASK_ONE_YEAR_PLAN) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.ASK_ONE_YEAR_PLAN,
+        widget: "use your ask_user_input_v0 widget with multi_select for required fields in the inline-chat response, decompose into mulitple turns if seperate blocks exceeed 3",
+        generation: GenerationPrompts.generate_one_year_plan_draft(),
+        message: "Only after completing the generation, ask the user to define their 1-year execution plan — 4 seperate input blocks as following: goals, key metrics, priorities, and constraints. Multiple plans are allowed.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.ASK_QUARTERLY_ROCKS) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.ASK_QUARTERLY_ROCKS,
+        widget: "use your ask_user_input_v0 widget with multi_select for required fields in the inline-chat response, decompose into mulitple turns if seperate blocks exceeed 3",
+        generation: GenerationPrompts.generate_quarterly_rocks_draft(),
+        message: "Only after completing the generation, ask the user to confirm and refine this quarter's Rocks — 5 seperate input blocks as following: title, owner, success metric, deadline, and status.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.ASK_VALUES) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.ASK_VALUES,
+        widget: "use your ask_user_input_v0 widget with multi_select for required fields in the inline-chat response, decompose into mulitple turns if seperate blocks exceeed 3",
+        generation: GenerationPrompts.generate_values_draft(globalState.executive_name!),
+        message: "Only after completing the generation, ask the user to define the company's core values — 2 seperate input blocks as following: name, description, and real behavioral examples for each.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.ASK_FUNCTIONAL_DOMAINS) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.ASK_FUNCTIONAL_DOMAINS,
+        widget: "use your ask_user_input_v0 widget with multi_select for domain names; allow the user to add custom names",
+        generation: GenerationPrompts.generate_functional_domains_draft(globalState.executive_name!),
+        message: "Only after completing the generation, ask the user which functional domains exist in their business.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.USER_CONFIRMATION) {
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.USER_CONFIRMATION,
+        widget: "use your ask_user_input_v0 widget for single_select with options: Yes (Store) and No (Edit)",
+        captured_hierarchy: {
+          ten_year_target: session.ten_year_target,
+          three_year_picture: session.three_year_picture,
+          one_year_plans: session.one_year_plans,
+          quarterly_rocks: session.quarterly_rocks,
+          values: session.values,
+          functional_domains: session.functional_domains,
+        },
+        message: "Here is the full EOS Knowledge Hierarchy captured so far. Review each level and confirm to store, or say 'no' to go back and edit.",
+      };
+    }
+
+    if (session.step === CaptureEosHierarchySteps.INSERT) {
+      const exec_id = globalState.executive_name!;
+      await this.helper.upsert_eos_profile(this.adapter, exec_id, {
+        ten_year: session.ten_year_target,
+        three_year: session.three_year_picture,
+        one_year: session.one_year_plans,
+        quarterly_rocks: session.quarterly_rocks,
+        values: session.values,
+      });
+
+      const hierarchy = {
+        ten_year_target: session.ten_year_target,
+        three_year_picture: session.three_year_picture,
+        one_year_plans: session.one_year_plans,
+        quarterly_rocks: session.quarterly_rocks,
+        values: session.values,
+        functional_domains: session.functional_domains,
+      };
+      delete CAPTURE_EOS_HIERARCHY_SESSIONS[session_state.session_id];
+      return {
+        session_id: session.session_id,
+        status: CaptureEosHierarchySteps.INSERT,
+        // hierarchy,
+        message: "EOS Knowledge Hierarchy captured and persisted to eos_profile successfully.",
+      };
+    }
+
+    return { status: "completed", message: "EOS Knowledge Hierarchy capture completed." };
+  }
 }  

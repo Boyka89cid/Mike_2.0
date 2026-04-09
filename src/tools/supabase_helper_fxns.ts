@@ -186,26 +186,103 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
         return { rows_created: rows.length };
     }
 
-    async add_knowledge_entry(
+    async add_exec_question(
         supabaseAdapter: SupabaseAdapter,
-        embeddingAdapter: EmbeddingAdapter,
         exec_id: string,
         domain_slug: string,
-        entry: { content: string; category: string; tags: string[] }
-    ): Promise<void> {
+        question: string,
+        category: string,
+    ): Promise<string> {
         const client = supabaseAdapter.getClient();
-        const embedding = await embeddingAdapter.generateEmbedding(entry.content);
-        const { error } = await client.from("exec_knowledge").insert({
+        const { data, error } = await client.from("exec_knowledge").insert({
             exec_id,
             domain: domain_slug,
-            content: entry.content,
-            embedding,
-            category: entry.category,
-            source_type: "knowledge_builder",
-            tags: entry.tags,
+            question,
+            content: "",
+            embedding: Array(1536).fill(0),
+            category,
+            source_type: "seed_session",
+            tags: [],
             is_seeded: false,
-        });
+        }).select("id").single();
         if (error) throw error;
+        return data.id;
+    }
+
+    async get_unanswered_questions(
+        supabaseAdapter: SupabaseAdapter,
+        exec_id: string,
+        domain_slug: string,
+    ): Promise<{ id: string; question: string; category: string }[]> {
+        const client = supabaseAdapter.getClient();
+        const { data, error } = await client
+            .from("exec_knowledge")
+            .select("id, question, category")
+            .eq("exec_id", exec_id)
+            .eq("domain", domain_slug)
+            .or("content.eq.,content.is.null")
+            .not("question", "is", null);
+        if (error) throw error;
+        return data ?? [];
+    }
+
+    async save_question_answer(
+        supabaseAdapter: SupabaseAdapter,
+        embeddingAdapter: EmbeddingAdapter,
+        id: string,
+        answer: string,
+    ): Promise<void> {
+        const client = supabaseAdapter.getClient();
+        const embedding = await embeddingAdapter.generateEmbedding(answer);
+        const { error } = await client
+            .from("exec_knowledge")
+            .update({ content: answer, embedding })
+            .eq("id", id);
+        if (error) throw error;
+    }
+
+    async eos_profile_exists(
+        supabaseAdapter: SupabaseAdapter,
+        exec_id: string
+    ): Promise<boolean> {
+        try {
+            const client = supabaseAdapter.getClient();
+            const { data, error } = await client
+                .from("eos_profile")
+                .select("exec_id")
+                .eq("exec_id", exec_id)
+                .single();
+            return !error && !!data;
+        } catch {
+            return false;
+        }
+    }
+
+    async upsert_eos_profile(
+        supabaseAdapter: SupabaseAdapter,
+        exec_id: string,
+        profile: {
+            ten_year: any;
+            three_year: any;
+            one_year: any;
+            quarterly_rocks: any;
+            values: any;
+        }
+    ): Promise<void> {
+        const client = supabaseAdapter.getClient();
+        const { error } = await client.from("eos_profile").upsert(
+            {
+                exec_id,
+                ten_year: profile.ten_year ?? null,
+                three_year: profile.three_year ?? null,
+                one_year: profile.one_year ?? null,
+                quarterly_rocks: profile.quarterly_rocks ?? null,
+                values: profile.values ?? null,
+                updated_at: new Date().toISOString(),
+            },
+            { onConflict: "exec_id" }
+        );
+        if (error) throw new Error(`Failed to persist EOS profile: ${error.message}`);
     }
 
     async create_domain(
@@ -238,16 +315,26 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
 
             const domain_id = data?.[0]?.id;
 
-            const embeddingAdapter = new EmbeddingAdapter();
-            const { rows_created } = await this.create_exec_knowledge_seed_entries(
-                supabaseAdapter,
-                embeddingAdapter,
-                domainDetails.exec_id,
-                domainDetails.domain_slug,
-                domainDetails.knowledge_entries
-            );
+            for (const question of domainDetails.questions_with_this_domain) {
+                await this.add_exec_question(
+                    supabaseAdapter,
+                    domainDetails.exec_id,
+                    domainDetails.domain_slug,
+                    question,
+                    "faq",
+                );
+            }
 
-            return `Domain created successfully with ID: ${domain_id}. Seeded ${rows_created} knowledge entries into exec_knowledge.`;
+            // const embeddingAdapter = new EmbeddingAdapter();
+            // const { rows_created } = await this.create_exec_knowledge_seed_entries(
+            //     supabaseAdapter,
+            //     embeddingAdapter,
+            //     domainDetails.exec_id,
+            //     domainDetails.domain_slug,
+            //     domainDetails.knowledge_entries
+            // );
+
+            return `Domain created successfully with ID: ${domain_id}.`;
         } catch (e: any) {
             return `Failed to create domain: ${e.message}`;
         }

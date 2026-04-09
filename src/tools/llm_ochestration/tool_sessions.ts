@@ -45,16 +45,9 @@ export type AddContentSessionState = {
   session_id: string;
   step?: string;
   display_name?: string;
-<<<<<<< HEAD
   domain_slug?: string;
   current_question_index?: number;
   answer?: string;
-=======
-  //domain_slug?: string;
-  content?: string;
-  category?: string;
-  tags?: string[];
->>>>>>> 75129cb4f49fbbf6776ed919c717bee00221ebe6
 };
 
 // ─── EOS Knowledge Hierarchy ─────────────────────────────────────────────────

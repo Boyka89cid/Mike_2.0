@@ -285,6 +285,50 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
         if (error) throw new Error(`Failed to persist EOS profile: ${error.message}`);
     }
 
+    async eos_profile_exists(
+        supabaseAdapter: SupabaseAdapter,
+        exec_id: string
+    ): Promise<boolean> {
+        try {
+            const client = supabaseAdapter.getClient();
+            const { data, error } = await client
+                .from("eos_profile")
+                .select("exec_id")
+                .eq("exec_id", exec_id)
+                .single();
+            return !error && !!data;
+        } catch {
+            return false;
+        }
+    }
+
+    async upsert_eos_profile(
+        supabaseAdapter: SupabaseAdapter,
+        exec_id: string,
+        profile: {
+            ten_year: any;
+            three_year: any;
+            one_year: any;
+            quarterly_rocks: any;
+            values: any;
+        }
+    ): Promise<void> {
+        const client = supabaseAdapter.getClient();
+        const { error } = await client.from("eos_profile").upsert(
+            {
+                exec_id,
+                ten_year: profile.ten_year ?? null,
+                three_year: profile.three_year ?? null,
+                one_year: profile.one_year ?? null,
+                quarterly_rocks: profile.quarterly_rocks ?? null,
+                values: profile.values ?? null,
+                updated_at: new Date().toISOString(),
+            },
+            { onConflict: "exec_id" }
+        );
+        if (error) throw new Error(`Failed to persist EOS profile: ${error.message}`);
+    }
+
     async create_domain(
         supabaseAdapter: SupabaseAdapter,
         domainDetails: {

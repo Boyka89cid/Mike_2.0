@@ -10,6 +10,8 @@ export class ToolPrompts {
     - After the tool returns, you may present exactly the tool's message verbatim.
     - Do NOT call the final tool unless you have all the required information and user_confirmation=true, whenever required.`;
 
+    static clear_session = `Call this tool whenever the user switches between workflows, pauses a multi-step tool, or explicitly wants to abandon the current session. Pass the session_id to clear a specific session, or omit it to clear all active sessions. This must be called before starting a new unrelated tool flow to avoid stale session state. \n${ToolPrompts.RULES}`;
+
     static get list_domains() { return `Fetch the list of domains for executive: '${globalState.executive_name}' \n${ToolPrompts.RULES}`; }
     static check_supabase_connection = `Check the connection to the Supabase database by running a test query. \n${ToolPrompts.RULES}`;
 
@@ -37,18 +39,20 @@ export class ToolPrompts {
 
     static create_domain = `Orchestrate the process of creating a domain based upon on user input \n${ToolPrompts.create_domain_workflow}`;
 
-    static add_content_to_domain_workflow = `
-    WORKFLOW: add_content_to_domain (state machine)
-    Steps in order: ask_display_name → fetch_questions → [ask_answers → save_answer] × Number of questions (loops once per unanswered question)
+    static answer_domain_questions_workflow = `
+    WORKFLOW: answer_domain_questions (state machine)
+    Steps in order: ask_display_name → fetch_questions → [ask_answers → (save_answer | delete_question | skip_question)] × Number of questions (loops once per unanswered question)
     ${ToolPrompts.RULES}
     1) Guess the display_name from the user input if possible, then call ask_display_name to confirm. Let the user pick from available domains.
     2) Once display_name is known, call fetch_questions — this runs automatically (no user interaction). If status="domain_not_found", exit and call create_domain immediately.
-    3) fetch_questions returns the first unanswered question. Present it to the executive and collect their answer.
-    4) Once the executive answers, immediately call save_answer to persist — no confirmation step.
-    5) If more questions remain, the tool returns the next question — call this tool again immediately to present it.
-    6) Repeat until status="completed".`;
+    3) fetch_questions returns the first unanswered question. Present it to the executive with 3 options: answer it, mark it as irrelevant/not needed, or skip it to answer later.
+    4) If the executive answers, call this tool with answer= to persist — no confirmation step.
+    5) If the executive says the question is not relevant or not needed, call this tool with mark_irrelevant=true to permanently delete it from the database.
+    6) If the executive wants to skip and answer later, call this tool with skip_question=true — the question stays in the database and will appear again next session.
+    7) If more questions remain, the tool returns the next question — call this tool again immediately to present it.
+    8) Repeat until status="completed".`;
 
-    static add_content_to_domain = `Orchestrate the process of adding content to a domain based upon user input \n${ToolPrompts.add_content_to_domain_workflow}`;
+    static answer_domain_questions = `Orchestrate the Q&A game of answering unanswered questions for an existing domain. \n${ToolPrompts.answer_domain_questions_workflow}`;
 
     static capture_eos_hierarchy_workflow = `
     Act as an EOS facilitator for this tool.

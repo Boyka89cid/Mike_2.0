@@ -1,15 +1,15 @@
 export class GenerationPrompts {
 
     static generate_example_questions(area_of_business: string): string {
-        return `Generate 3 to 5 example questions that someone can ask about ${area_of_business}.`;
+        return `Generate 2 to 4 example questions that someone can ask about  ${area_of_business}. Also the last option should be speak out your own question so that the user can ask a question that is not in the list.`;
     }
 
     static generate_scope_of_domain(area_of_business: string, questions_with_this_domain: string[]): string {
-        return `Based on the ${area_of_business} and the example questions ${questions_with_this_domain.join(", ")}, generate a clear scope of the domain in a concise manner for ${area_of_business}.`;
+        return `Based on the ${area_of_business} and the example questions ${questions_with_this_domain.join(", ")}, generate a clear scope of the domain in a concise manner for ${area_of_business}. Also the last option should be speak out your own scope so that the user can specify a scope that is not in the list.`;
     }
 
     static generate_extra_details(area_of_business: string): string {
-        return `Based on the ${area_of_business}, example questions, and scope of the domain, generate any extra details that can help better understand this domain`;
+        return `Based on the ${area_of_business}, example questions, and scope of the domain, generate any extra details that can help better understand this domain. Also the last option should be speak out your own details so that the user can provide details that are not in the list.`;
     }
 
     static generate_additional_questions_system(): string {
@@ -19,7 +19,7 @@ export class GenerationPrompts {
         - Is open-ended and makes the executive pause and reflect before answering
         - Covers one of these angles: operational (how we do X), strategic (why we do X), definitional (what is X), or contextual (history, philosophy, trade-offs)
         - Is concise — one sentence
-        Output format: Return ONLY a valid JSON array of 20 question strings. No markdown, no explanation, no preamble.`;
+        Output format: Return ONLY a valid JSON array of objects with shape { "question": string, "tags": string[] }. Tags should be 2–4 lowercase keywords relevant to the question. No markdown, no explanation, no preamble.`;
     }
 
     static generate_additional_questions(params: {

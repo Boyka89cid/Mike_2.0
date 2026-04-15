@@ -24,12 +24,19 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
       response: z.string().optional(),
     })
   }),
-  add_content_to_domain: z.object({
+  clear_session: z.object({
+    session_state: z.object({
+      session_id: z.string().optional(),
+    })
+  }),
+  answer_domain_questions: z.object({
     session_state: z.object({
       session_id: z.string(),
       step: z.string().optional(),
       display_name: z.string().optional(),
       answer: z.string().optional(),
+      mark_irrelevant: z.boolean().optional(),
+      skip_question: z.boolean().optional(),
     })
   }),
   capture_eos_hierarchy: z.object({

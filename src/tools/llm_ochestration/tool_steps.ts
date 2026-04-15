@@ -32,6 +32,8 @@ export const AddContentSteps = {
   FETCH_QUESTIONS: "fetch_questions",
   ASK_ANSWERS: "ask_answers",
   SAVE_ANSWER: "save_answer",
+  DELETE_QUESTION: "delete_question",
+  SKIP_QUESTION: "skip_question",
 } as const;
 
 export type AddContentSteps = (typeof AddContentSteps)[keyof typeof AddContentSteps];

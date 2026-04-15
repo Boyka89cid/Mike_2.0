@@ -41,6 +41,8 @@ export type AddContentSessionState = {
   domain_slug?: string;
   current_question_index?: number;
   answer?: string;
+  mark_irrelevant?: boolean;
+  skip_question?: boolean;
 };
 
 // ─── EOS Knowledge Hierarchy ─────────────────────────────────────────────────

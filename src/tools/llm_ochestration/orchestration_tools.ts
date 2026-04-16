@@ -1,22 +1,59 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SupabaseAdapter } from "../../adapter/supabase_adapter.ts";
 import { EmbeddingAdapter } from "../../adapter/embedding_adapter.ts";
 import { SupabaseHelperFxns } from "../supabase_helper_fxns.ts";
 import { AddContentSteps, CaptureEosHierarchySteps, CreateDomainSteps, ReadDomainSteps } from "./tool_steps.ts";
-import type { AddContentSessionState, CaptureEosHierarchySessionState, CreateDomainSessionState, ReadDomainSessionState } from "./tool_sessions.ts";
+import type { AddContentSessionState, CaptureEosHierarchySessionState, CreateDomainSessionState, ReadDomainSessionState, PendingQuestion } from "./tool_sessions.ts";
 import { ToolPrompts } from "./tool_prompts.ts";
 import { GenerationPrompts } from "./generation_prompts.ts";
 import { globalState } from "../../index.ts";
 import { TOOL_SCHEMAS } from "./tool_input_schemas.ts";
+
+type QuestionWithTags = { question: string; tags: string[] };
+
+async function generateTagsForQuestions(questions: string[], area_of_business: string): Promise<QuestionWithTags[]> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY in env");
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      max_tokens: 1024,
+      messages: [
+        {
+          role: "system",
+          content: `You generate 2–4 lowercase keyword tags for each question in a business knowledge base. Output ONLY a valid JSON array of objects with shape { "question": string, "tags": string[] }. No markdown, no explanation.`,
+        },
+        {
+          role: "user",
+          content: `Domain: ${area_of_business}\nQuestions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenAI API error: ${err}`);
+  }
+
+  const json = (await response.json()) as { choices: { message: { content: string } }[] };
+  const text = json.choices[0]?.message?.content ?? "[]";
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  return jsonMatch ? JSON.parse(jsonMatch[0]) : questions.map(q => ({ question: q, tags: [] }));
+}
 
 async function generateAdditionalQuestions(params: {
   area_of_business: string;
   questions_with_this_domain: string[];
   scope_of_domain: { covers: string[]; not_covers: string[] };
   extra_details: string;
-}): Promise<string[]> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+}): Promise<QuestionWithTags[]> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error("Missing OPENAI_API_KEY in env");
+
   const prompt = GenerationPrompts.generate_additional_questions({
     area_of_business: params.area_of_business,
     questions_with_this_domain: params.questions_with_this_domain,
@@ -24,13 +61,27 @@ async function generateAdditionalQuestions(params: {
     not_covers: params.scope_of_domain.not_covers,
     extra_details: params.extra_details,
   });
-  const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
-    max_tokens: 2048,
-    system: GenerationPrompts.generate_additional_questions_system(),
-    messages: [{ role: "user", content: prompt }],
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "gpt-4o",
+      max_tokens: 2048,
+      messages: [
+        { role: "system", content: GenerationPrompts.generate_additional_questions_system() },
+        { role: "user", content: prompt },
+      ],
+    }),
   });
-  const text = (message.content[0] as Anthropic.TextBlock).text ?? "[]";
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenAI API error: ${err}`);
+  }
+
+  const json = (await response.json()) as { choices: { message: { content: string } }[] };
+  const text = json.choices[0]?.message?.content ?? "[]";
   const jsonMatch = text.match(/\[[\s\S]*\]/);
   return jsonMatch ? JSON.parse(jsonMatch[0]) : [];
 }
@@ -50,6 +101,9 @@ export function registerOrchestrationTools(mcp: McpServer) {
       },
       async (input) => {
         const result = await (orchestrationTools as any)[toolName](input.session_state);
+        // if (result.widget) {
+        //   result.widget += "; the user can always speak out or type their response freely — make sure that this kind of option is always available in the ask_user_input_v0 widget alongside the generated options.";
+        // }
         return {
           content: [{ type: "text", text: JSON.stringify(result) }]
         };}
@@ -58,9 +112,9 @@ export function registerOrchestrationTools(mcp: McpServer) {
 }
 
 const ADD_CONTENT_SESSIONS: Record<string, AddContentSessionState> = {};
-const ADD_CONTENT_QUESTION_CACHE: Record<string, import("./tool_sessions.ts").PendingQuestion[]> = {};
+const ADD_CONTENT_QUESTION_CACHE: Record<string, PendingQuestion[]> = {};
 const CREATE_DOMAIN_SESSIONS: Record<string, CreateDomainSessionState> = {};
-const CREATE_DOMAIN_SERVER_STATE: Record<string, { generated_questions?: string[] }> = {};
+const CREATE_DOMAIN_SERVER_STATE: Record<string, { generated_questions?: QuestionWithTags[]; user_questions_with_tags?: QuestionWithTags[] }> = {};
 const READ_DOMAIN_SESSIONS: Record<string, ReadDomainSessionState> = {};
 const CAPTURE_EOS_HIERARCHY_SESSIONS: Record<string, CaptureEosHierarchySessionState> = {};
 const EOS_EXISTENCE_CHECKED = new Set<string>(); // tracks exec_ids already checked this server session
@@ -74,7 +128,30 @@ class OrchestrationTools {
     this.helper = new SupabaseHelperFxns();
   }
 
-  async add_content_to_domain(session_state: AddContentSessionState): Promise<Record<string, any>> {
+  async clear_session(session_state: { session_id?: string }): Promise<Record<string, any>> {
+    const id = session_state?.session_id;
+    if (id) {
+      delete ADD_CONTENT_SESSIONS[id];
+      delete ADD_CONTENT_QUESTION_CACHE[id];
+      delete CREATE_DOMAIN_SESSIONS[id];
+      delete CREATE_DOMAIN_SERVER_STATE[id];
+      delete READ_DOMAIN_SESSIONS[id];
+      delete CAPTURE_EOS_HIERARCHY_SESSIONS[id];
+    } else {
+      for (const key of Object.keys(ADD_CONTENT_SESSIONS)) { delete ADD_CONTENT_SESSIONS[key]; }
+      for (const key of Object.keys(ADD_CONTENT_QUESTION_CACHE)) { delete ADD_CONTENT_QUESTION_CACHE[key]; }
+      for (const key of Object.keys(CREATE_DOMAIN_SESSIONS)) { delete CREATE_DOMAIN_SESSIONS[key]; }
+      for (const key of Object.keys(CREATE_DOMAIN_SERVER_STATE)) { delete CREATE_DOMAIN_SERVER_STATE[key]; }
+      for (const key of Object.keys(READ_DOMAIN_SESSIONS)) { delete READ_DOMAIN_SESSIONS[key]; }
+      for (const key of Object.keys(CAPTURE_EOS_HIERARCHY_SESSIONS)) { delete CAPTURE_EOS_HIERARCHY_SESSIONS[key]; }
+    }
+    return {
+      status: "cleared",
+      message: id ? `Session '${id}' has been cleared.` : "All active sessions have been cleared.",
+    };
+  }
+
+  async answer_domain_questions(session_state: AddContentSessionState): Promise<Record<string, any>> {
     if (!session_state?.session_id) {
       return {
         status: "error",
@@ -85,8 +162,10 @@ class OrchestrationTools {
     const decideStep = (s: AddContentSessionState): string => {
       if (!s.display_name) return AddContentSteps.ASK_DISPLAY_NAME;
       if (s.current_question_index === undefined) return AddContentSteps.FETCH_QUESTIONS;
-      if (!s.answer) return AddContentSteps.ASK_ANSWERS;
-      return AddContentSteps.SAVE_ANSWER;
+      if (s.mark_irrelevant) return AddContentSteps.DELETE_QUESTION;
+      if (s.skip_question) return AddContentSteps.SKIP_QUESTION;
+      if (!s.answer) return AddContentSteps.GET_QUESTION;
+      return AddContentSteps.ANSWER_QUESTION;
     };
 
     const existing = ADD_CONTENT_SESSIONS[session_state.session_id] ?? {
@@ -144,8 +223,9 @@ class OrchestrationTools {
       const first = questions[0];
       return {
         session_id: session.session_id,
-        status: AddContentSteps.ASK_ANSWERS,
+        status: AddContentSteps.GET_QUESTION,
         progress: `Question 1 of ${questions.length}`,
+        widget: "use your ask_user_input_v0 widget for single_select option in the inline-chat response with options: 'answer', 'mark as irrelevant/not needed', 'skip to answer later', 'end this session and answer later'",
         category: first.category,
         message: first.question,
       };
@@ -156,17 +236,18 @@ class OrchestrationTools {
     const idx = session.current_question_index!;
     const current = questions[idx];
 
-    if (session.step === AddContentSteps.ASK_ANSWERS) {
+    if (session.step === AddContentSteps.GET_QUESTION) {
       return {
         session_id: session.session_id,
-        status: AddContentSteps.ASK_ANSWERS,
+        status: AddContentSteps.GET_QUESTION,
         progress: `Question ${idx + 1} of ${questions.length}`,
+        widget: "use your ask_user_input_v0 widget for single_select option in the inline-chat response with options: 'answer', 'mark as irrelevant/not needed', 'skip to answer later', 'end this session and answer later'",
         category: current.category,
-        message: current.question,
+        question: current.question,
       };
     }
 
-    if (session.step === AddContentSteps.SAVE_ANSWER) {
+    if (session.step === AddContentSteps.ANSWER_QUESTION) {
       const embeddingAdapter = new EmbeddingAdapter();
       try {
         await this.helper.save_question_answer(this.adapter, embeddingAdapter, current.id, session.answer!);
@@ -196,11 +277,79 @@ class OrchestrationTools {
       const next = questions[nextIdx];
       return {
         session_id: session.session_id,
-        status: AddContentSteps.SAVE_ANSWER,
+        status: AddContentSteps.ANSWER_QUESTION,
         saved: true,
         progress: `Question ${nextIdx + 1} of ${questions.length}`,
         category: next.category,
-        message: `Answer saved. Call this tool again immediately to ask the next question.`,
+        message: `Answer saved. Present the next question to the user only by calling this tool again with step as '${AddContentSteps.GET_QUESTION}' and wait for their response before calling this tool again.`,
+      };
+    }
+
+    if (session.step === AddContentSteps.DELETE_QUESTION) {
+      try {
+        await this.helper.delete_question(this.adapter, current.id);
+      } catch (e: any) {
+        return {
+          session_id: session.session_id,
+          status: "error",
+          message: `Failed to delete question: ${e.message}`,
+        };
+      }
+
+      // Remove the deleted question from the cache so indices stay consistent
+      questions.splice(idx, 1);
+      ADD_CONTENT_QUESTION_CACHE[session_state.session_id] = questions;
+
+      if (questions.length === 0 || idx >= questions.length) {
+        delete ADD_CONTENT_SESSIONS[session_state.session_id];
+        delete ADD_CONTENT_QUESTION_CACHE[session_state.session_id];
+        return {
+          session_id: session.session_id,
+          status: "completed",
+          message: `Question deleted. No more questions remaining for '${session.display_name}'.`,
+        };
+      }
+
+      session.mark_irrelevant = undefined;
+      session.answer = undefined;
+      ADD_CONTENT_SESSIONS[session_state.session_id] = session;
+
+      const next = questions[idx];
+      return {
+        session_id: session.session_id,
+        status: AddContentSteps.DELETE_QUESTION,
+        deleted: true,
+        progress: `Question ${idx + 1} of ${questions.length}`,
+        category: next.category,
+        message: `Question deleted. Present the next question to the user only by calling this tool again with step as '${AddContentSteps.GET_QUESTION}' and wait for their response before calling this tool again.`,
+      };
+    }
+
+    if (session.step === AddContentSteps.SKIP_QUESTION) {
+      const nextIdx = idx + 1;
+      if (nextIdx >= questions.length) {
+        delete ADD_CONTENT_SESSIONS[session_state.session_id];
+        delete ADD_CONTENT_QUESTION_CACHE[session_state.session_id];
+        return {
+          session_id: session.session_id,
+          status: "completed",
+          message: `No more questions remaining for '${session.display_name}'. Skipped question will still be unanswered and available next time.`,
+        };
+      }
+
+      session.current_question_index = nextIdx;
+      session.skip_question = undefined;
+      session.answer = undefined;
+      ADD_CONTENT_SESSIONS[session_state.session_id] = session;
+
+      const next = questions[nextIdx];
+      return {
+        session_id: session.session_id,
+        status: AddContentSteps.SKIP_QUESTION,
+        skipped: true,
+        progress: `Question ${nextIdx + 1} of ${questions.length}`,
+        category: next.category,
+        message: `Question skipped. Present the next question to the user only by calling this tool again with step as '${AddContentSteps.GET_QUESTION}' and wait for their response before calling this tool again.`,
       };
     }
 
@@ -284,7 +433,7 @@ class OrchestrationTools {
         this.helper.search_domain_chunks(this.adapter, exec_id, domain_slug, session.query!),
       ]);
 
-      session.fetched_chunks = chunks;
+      session.fetched_chunks = chunks.filter((c: any) => c.content?.trim());
       session.fetched_domain_context = domainContext;
       READ_DOMAIN_SESSIONS[session_state.session_id] = session;
 
@@ -299,14 +448,15 @@ class OrchestrationTools {
       return {
         session_id: session.session_id,
         status: ReadDomainSteps.GENERATE,
-        generation: GenerationPrompts.generate_rag_answer({
-          query: session.query!,
-          domain_name: session.display_name!,
-          description: session.fetched_domain_context?.description ?? { covers: [], not_covers: [] },
+        query: session.query,
+        domain_context: {
+          covers: session.fetched_domain_context?.description?.covers ?? [],
+          not_covers: session.fetched_domain_context?.description?.not_covers ?? [],
           example_questions: session.fetched_domain_context?.example_questions ?? [],
           extra_details: session.fetched_domain_context?.extra_details ?? [],
-          chunks: (session.fetched_chunks ?? []).map((c: any) => ({ id: c.id, content: c.content })),
-        }),
+        },
+        retrieved_chunks: (session.fetched_chunks ?? []).map((c: any, i: number) => ({ index: i + 1, content: c.content })),
+        instruction: "Generate a comprehensive answer to the query using domain_context and retrieved_chunks. Answer in the executive's voice — confident, first-person, direct. Ground every claim in the retrieved knowledge. If the retrieved knowledge does not contain enough to answer, say so clearly. After presenting the answer, call this tool again with your response text.",
       };
     }
 
@@ -349,7 +499,7 @@ class OrchestrationTools {
         if (s.user_confirmation === false)
           return CreateDomainSteps.ASK_AREA_OF_DOMAIN;
         // Check server-side state — generated_questions never pass through Claude's context
-        if (!CREATE_DOMAIN_SERVER_STATE[session_state.session_id]?.generated_questions)
+        if (!CREATE_DOMAIN_SERVER_STATE[session_state.session_id]?.generated_questions?.length)
           return CreateDomainSteps.GENERATE_ENTRIES;
         return CreateDomainSteps.CREATE_DOMAIN;
     };
@@ -375,7 +525,7 @@ class OrchestrationTools {
             status: CreateDomainSteps.ASK_AREA_OF_DOMAIN,
             existing_domains : existing_domains,
             widget: 'use ask_user_input_v0 widget for single_select option in the inline-chat response excluding already existing_domains',
-            message: "What area of the business does this knowledge belong to? For example, is it related to sales, customer support, engineering, etc.?"
+            message: "What area of the business does this knowledge belong to? For example, is it related to sales, customer support, engineering, speak out on your own?"
         }
     }
     if (session.step === CreateDomainSteps.ASK_QUESTIONS_WITH_THIS_DOMAIN) {
@@ -423,17 +573,24 @@ class OrchestrationTools {
     }
     if (session.step === CreateDomainSteps.GENERATE_ENTRIES) {
         try {
-            const questions = await generateAdditionalQuestions({
-                area_of_business: session.area_of_business ?? "",
-                questions_with_this_domain: session.questions_with_this_domain ?? [],
-                scope_of_domain: session.scope_of_domain ?? { covers: [], not_covers: [] },
-                extra_details: session.extra_details ?? "",
-            });
-            CREATE_DOMAIN_SERVER_STATE[session.session_id] = { generated_questions: questions };
+            const area = session.area_of_business ?? "";
+            const [generatedQuestions, userQuestionsWithTags] = await Promise.all([
+                generateAdditionalQuestions({
+                    area_of_business: area,
+                    questions_with_this_domain: session.questions_with_this_domain ?? [],
+                    scope_of_domain: session.scope_of_domain ?? { covers: [], not_covers: [] },
+                    extra_details: session.extra_details ?? "",
+                }),
+                generateTagsForQuestions(session.questions_with_this_domain ?? [], area),
+            ]);
+            CREATE_DOMAIN_SERVER_STATE[session.session_id] = {
+                generated_questions: generatedQuestions,
+                user_questions_with_tags: userQuestionsWithTags,
+            };
             return {
                 status: CreateDomainSteps.GENERATE_ENTRIES,
-                questions_generated: questions.length,
-                message: `Generated ${questions.length} additional questions for this domain. Call this tool again immediately to create the domain.`,
+                questions_generated: generatedQuestions.length,
+                message: `Generated ${generatedQuestions.length} additional questions for this domain. Call this tool again immediately to create the domain.`,
             };
         } catch (e: any) {
             return { status: "error", message: `Failed to generate additional questions: ${e.message}` };
@@ -447,15 +604,17 @@ class OrchestrationTools {
           .replace(/\s+/g, "_")
           .replace(/^[_-]+|[_-]+$/g, "");
 
-        const generatedQuestions = CREATE_DOMAIN_SERVER_STATE[session.session_id]?.generated_questions ?? [];
-        const allQuestions = [...(session.questions_with_this_domain ?? []), ...generatedQuestions];
+        const serverState = CREATE_DOMAIN_SERVER_STATE[session.session_id];
+        const generatedQuestions = serverState?.generated_questions ?? [];
+        const userQuestionsWithTags = serverState?.user_questions_with_tags ?? (session.questions_with_this_domain ?? []).map(q => ({ question: q, tags: [] }));
 
         const result = await this.helper.create_domain(this.adapter, {
             exec_id: globalState.executive_name!,
             domain_slug: slug,
             area_of_business: session.area_of_business ?? "",
             scope_of_domain: session.scope_of_domain ?? { covers: [], not_covers: [] },
-            questions_with_this_domain: allQuestions,
+            user_questions_with_tags: userQuestionsWithTags,
+            generated_questions: generatedQuestions,
             extra_details: session.extra_details ? [session.extra_details] : [],
             knowledge_entries: [],
         });

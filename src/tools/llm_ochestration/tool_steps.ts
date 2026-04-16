@@ -30,8 +30,10 @@ export type CreateDomainSteps = (typeof CreateDomainSteps)[keyof typeof CreateDo
 export const AddContentSteps = {
   ASK_DISPLAY_NAME: "ask_display_name",
   FETCH_QUESTIONS: "fetch_questions",
-  ASK_ANSWERS: "ask_answers",
-  SAVE_ANSWER: "save_answer",
+  GET_QUESTION: "get_question",
+  ANSWER_QUESTION: "answer_question",
+  DELETE_QUESTION: "delete_question",
+  SKIP_QUESTION: "skip_question",
 } as const;
 
 export type AddContentSteps = (typeof AddContentSteps)[keyof typeof AddContentSteps];

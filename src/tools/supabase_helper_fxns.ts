@@ -192,17 +192,19 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
         domain_slug: string,
         question: string,
         category: string,
+        tags: string[],
     ): Promise<string> {
         const client = supabaseAdapter.getClient();
+        const embedding = await new EmbeddingAdapter().generateEmbedding(question);
         const { data, error } = await client.from("exec_knowledge").insert({
             exec_id,
             domain: domain_slug,
             question,
             content: "",
-            embedding: Array(1536).fill(0),
+            embedding,
             category,
             source_type: "seed_session",
-            tags: [],
+            tags,
             is_seeded: false,
         }).select("id").single();
         if (error) throw error;
@@ -226,17 +228,28 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
         return data ?? [];
     }
 
+    async delete_question(
+        supabaseAdapter: SupabaseAdapter,
+        id: string,
+    ): Promise<void> {
+        const client = supabaseAdapter.getClient();
+        const { error } = await client
+            .from("exec_knowledge")
+            .delete()
+            .eq("id", id);
+        if (error) throw error;
+    }
+
     async save_question_answer(
         supabaseAdapter: SupabaseAdapter,
-        embeddingAdapter: EmbeddingAdapter,
+        _embeddingAdapter: EmbeddingAdapter,
         id: string,
         answer: string,
     ): Promise<void> {
         const client = supabaseAdapter.getClient();
-        const embedding = await embeddingAdapter.generateEmbedding(answer);
         const { error } = await client
             .from("exec_knowledge")
-            .update({ content: answer, embedding })
+            .update({ content: answer })
             .eq("id", id);
         if (error) throw error;
     }
@@ -336,7 +349,8 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
             domain_slug: string,
             area_of_business: string,
             scope_of_domain: { covers: string[], not_covers: string[] },
-            questions_with_this_domain: string[],
+            user_questions_with_tags: { question: string; tags: string[] }[],  // stored in knowledge_domains.example_questions + exec_knowledge
+            generated_questions: { question: string; tags: string[] }[],       // seeded into exec_knowledge only
             extra_details: string[],
             knowledge_entries: { content: string; category: string; tags: string[] }[],
         }): Promise<string> {
@@ -348,25 +362,23 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
                 domain_slug: domainDetails.domain_slug,
                 display_name: domainDetails.area_of_business,
                 description: domainDetails.scope_of_domain,
-                example_questions: domainDetails.questions_with_this_domain,
+                example_questions: domainDetails.user_questions_with_tags.map(q => q.question),
                 extra_details: domainDetails.extra_details,
                 created_at: new Date().toISOString(),
                 created_by: 'exec',
-                chunk_count: domainDetails.questions_with_this_domain.length
+                chunk_count: domainDetails.generated_questions.length + domainDetails.user_questions_with_tags.length
             }).select();
 
             if (error) throw error;
 
             const domain_id = data?.[0]?.id;
 
-            for (const question of domainDetails.questions_with_this_domain) {
-                await this.add_exec_question(
-                    supabaseAdapter,
-                    domainDetails.exec_id,
-                    domainDetails.domain_slug,
-                    question,
-                    "faq",
-                );
+            for (const { question, tags } of domainDetails.user_questions_with_tags) {
+                await this.add_exec_question(supabaseAdapter, domainDetails.exec_id, domainDetails.domain_slug, question, "faq", tags);
+            }
+
+            for (const { question, tags } of domainDetails.generated_questions) {
+                await this.add_exec_question(supabaseAdapter, domainDetails.exec_id, domainDetails.domain_slug, question, "faq", tags);
             }
 
             // const embeddingAdapter = new EmbeddingAdapter();

@@ -93,7 +93,7 @@ app.all("/mcp", async (req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, "0.0.0.0", () => {
-  console.log(`Mike_2.0 listening on port ${port}`);
+  //console.log(`Mike_2.0 listening on port ${port}`);
 });
 
 // import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";

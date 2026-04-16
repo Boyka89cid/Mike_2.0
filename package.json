@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.ts",
   "scripts": {
+    "start": "tsx src/index.ts",
     "dev": "tsx src/index.ts",
     "inspector": "PORT=6278 npx @modelcontextprotocol/inspector tsx src/index.ts"
   },

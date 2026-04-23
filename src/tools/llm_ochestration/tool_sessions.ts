@@ -94,3 +94,7 @@ export type CaptureEosHierarchySessionState = {
   functional_domains?: string[];           // just domain names
   user_confirmation?: boolean;
 };
+
+export type FrequentlyAskedQuestionsSessionState = {
+  session_id: string;
+};

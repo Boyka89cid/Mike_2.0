@@ -39,6 +39,11 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
       skip_question: z.boolean().optional(),
     })
   }),
+  get_frequently_asked_questions: z.object({
+    session_state: z.object({
+      session_id: z.string(),
+    })
+  }),
   capture_eos_hierarchy: z.object({
     session_state: z.object({
       session_id: z.string(),

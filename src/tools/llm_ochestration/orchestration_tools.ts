@@ -8,83 +8,7 @@ import { ToolPrompts } from "./tool_prompts.ts";
 import { GenerationPrompts } from "./generation_prompts.ts";
 import { globalState } from "../../index.ts";
 import { TOOL_SCHEMAS } from "./tool_input_schemas.ts";
-
-type QuestionWithTags = { question: string; tags: string[] };
-
-async function generateTagsForQuestions(questions: string[], area_of_business: string): Promise<QuestionWithTags[]> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY in env");
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "system",
-          content: `You generate 2–4 lowercase keyword tags for each question in a business knowledge base. Output ONLY a valid JSON array of objects with shape { "question": string, "tags": string[] }. No markdown, no explanation.`,
-        },
-        {
-          role: "user",
-          content: `Domain: ${area_of_business}\nQuestions:\n${questions.map((q, i) => `${i + 1}. ${q}`).join("\n")}`,
-        },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`OpenAI API error: ${err}`);
-  }
-
-  const json = (await response.json()) as { choices: { message: { content: string } }[] };
-  const text = json.choices[0]?.message?.content ?? "[]";
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  return jsonMatch ? JSON.parse(jsonMatch[0]) : questions.map(q => ({ question: q, tags: [] }));
-}
-
-async function generateAdditionalQuestions(params: {
-  area_of_business: string;
-  questions_with_this_domain: string[];
-  scope_of_domain: { covers: string[]; not_covers: string[] };
-  extra_details: string;
-}): Promise<QuestionWithTags[]> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("Missing OPENAI_API_KEY in env");
-
-  const prompt = GenerationPrompts.generate_additional_questions({
-    area_of_business: params.area_of_business,
-    questions_with_this_domain: params.questions_with_this_domain,
-    covers: params.scope_of_domain.covers,
-    not_covers: params.scope_of_domain.not_covers,
-    extra_details: params.extra_details,
-  });
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: "gpt-4o",
-      max_tokens: 2048,
-      messages: [
-        { role: "system", content: GenerationPrompts.generate_additional_questions_system() },
-        { role: "user", content: prompt },
-      ],
-    }),
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`OpenAI API error: ${err}`);
-  }
-
-  const json = (await response.json()) as { choices: { message: { content: string } }[] };
-  const text = json.choices[0]?.message?.content ?? "[]";
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  return jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-}
+import { OpenAIHelpers, type QuestionWithTags } from "./openai_helpers.ts";
 
 export function registerOrchestrationTools(mcp: McpServer) {
     const orchestrationTools = new OrchestrationTools();
@@ -126,6 +50,22 @@ class OrchestrationTools {
   constructor() {
     this.adapter = new SupabaseAdapter();
     this.helper = new SupabaseHelperFxns();
+  }
+
+  async get_frequently_asked_questions(_session_state: { session_id: string }): Promise<Record<string, any>> {
+    try {
+      const faqs = await this.helper.get_frequently_asked_questions(this.adapter, globalState.executive_name!);
+      if (faqs.length === 0) {
+        return { status: "empty", message: "No questions have been asked yet." };
+      }
+      return {
+        status: "success",
+        total: faqs.length,
+        questions: faqs.map((f, i) => ({ rank: i + 1, question: f.question, frequency: f.frequency })),
+      };
+    } catch (e: any) {
+      return { status: "error", message: `Failed to fetch frequently asked questions: ${e.message}` };
+    }
   }
 
   async clear_session(session_state: { session_id?: string }): Promise<Record<string, any>> {
@@ -467,7 +407,8 @@ class OrchestrationTools {
         globalState.executive_name!,
         session.query!,
         session.response!,
-        (session.fetched_chunks ?? []).map((c: any) => c.id)
+        (session.fetched_chunks ?? []).map((c: any) => c.id),
+        
       );
       return {
         session_id: session.session_id,
@@ -575,13 +516,13 @@ class OrchestrationTools {
         try {
             const area = session.area_of_business ?? "";
             const [generatedQuestions, userQuestionsWithTags] = await Promise.all([
-                generateAdditionalQuestions({
+                OpenAIHelpers.generateAdditionalQuestions({
                     area_of_business: area,
                     questions_with_this_domain: session.questions_with_this_domain ?? [],
                     scope_of_domain: session.scope_of_domain ?? { covers: [], not_covers: [] },
                     extra_details: session.extra_details ?? "",
                 }),
-                generateTagsForQuestions(session.questions_with_this_domain ?? [], area),
+                OpenAIHelpers.generateTagsForQuestions(session.questions_with_this_domain ?? [], area),
             ]);
             CREATE_DOMAIN_SERVER_STATE[session.session_id] = {
                 generated_questions: generatedQuestions,
@@ -785,4 +726,5 @@ class OrchestrationTools {
 
     return { status: "completed", message: "EOS Knowledge Hierarchy capture completed." };
   }
+
 }  

@@ -1,5 +1,6 @@
 import { SupabaseAdapter } from "../adapter/supabase_adapter.ts";
 import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
+import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
 
  export class SupabaseHelperFxns {
 
@@ -97,22 +98,64 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
         }
     }
 
-    // Used for writing question and answer for the end user based on domain knowledge
+    // Used for writing question and answer for the end user based on domain knowledge.
+    // Requires the following in Supabase:
+    //   1. An `embedding vector(1536)` column on `query_log`.
+    //   2. This RPC function:
+    //      CREATE OR REPLACE FUNCTION match_query_log(
+    //        query_embedding vector(1536), p_exec_id text,
+    //        p_threshold float DEFAULT 0.85, p_count int DEFAULT 5
+    //      ) RETURNS TABLE (id uuid, question text, frequency int, similarity float)
+    //      LANGUAGE sql STABLE AS $$
+    //        SELECT id, question, frequency,
+    //          1 - (embedding <=> query_embedding) AS similarity
+    //        FROM query_log
+    //        WHERE exec_id = p_exec_id
+    //          AND 1 - (embedding <=> query_embedding) >= p_threshold
+    //        ORDER BY similarity DESC
+    //        LIMIT p_count;
+    //      $$;
     async log_query(
         supabaseAdapter: SupabaseAdapter,
         exec_id: string,
         question: string,
         response: string,
-        chunks_used: string[]
+        chunks_used: string[],
     ): Promise<void> {
         try {
             const client = supabaseAdapter.getClient();
+            const embedding = await new EmbeddingAdapter().generateEmbedding(question);
+
+            // Find existing queries with similar embeddings
+            const { data: candidates } = await client.rpc("match_query_log", {
+                query_embedding: embedding,
+                p_exec_id: exec_id,
+                p_threshold: 0.85,
+                p_count: 5,
+            }) as { data: { id: string; question: string; frequency: number }[] | null };
+
+            if (candidates && candidates.length > 0) {
+                for (const candidate of candidates) {
+                    const isSame = await OpenAIHelpers.isSameQuestion(question, candidate.question);
+                    if (isSame) {
+                        await client
+                            .from("query_log")
+                            .update({ frequency: candidate.frequency + 1, asked_at: new Date().toISOString() })
+                            .eq("id", candidate.id);
+                        return;
+                    }
+                }
+            }
+
+            // No matching query found — insert as new entry
             await client.from("query_log").insert({
                 exec_id,
                 question,
                 response,
                 asked_at: new Date().toISOString(),
                 chunks_used,
+                frequency: 1,
+                embedding,
             });
         } catch {
             // Non-blocking — logging failure should not break the main flow
@@ -341,6 +384,22 @@ import { EmbeddingAdapter } from "../adapter/embedding_adapter.ts";
     //     );
     //     if (error) throw new Error(`Failed to persist EOS profile: ${error.message}`);
     // }
+
+    async get_frequently_asked_questions(
+        supabaseAdapter: SupabaseAdapter,
+        exec_id: string,
+        limit: number = 10,
+    ): Promise<{ question: string; frequency: number; asked_at: string }[]> {
+        const client = supabaseAdapter.getClient();
+        const { data, error } = await client
+            .from("query_log")
+            .select("question, frequency, asked_at")
+            .eq("exec_id", exec_id)
+            .order("frequency", { ascending: false })
+            .limit(limit);
+        if (error) throw error;
+        return data ?? [];
+    }
 
     async create_domain(
         supabaseAdapter: SupabaseAdapter,

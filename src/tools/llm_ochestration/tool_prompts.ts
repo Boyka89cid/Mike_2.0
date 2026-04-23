@@ -68,6 +68,8 @@ export class ToolPrompts {
     7) user_confirmation — Show a full summary of all captured levels and ask the CEO to confirm before storing.
     8) insert — Call this step once user_confirmation=true. `;
 
+    static get_frequently_asked_questions = `Fetch the most frequently asked questions for the executive from the query log, ranked by how often each question has been asked. Optionally filter by area of business. Present results as a ranked list showing question and frequency count. \n${ToolPrompts.RULES}`;
+
     static capture_eos_hierarchy = `Orchestrate the process of capturing the EOS Knowledge Hierarchy based on user input.\n${ToolPrompts.capture_eos_hierarchy_workflow}`;
 }
 

@@ -19,7 +19,7 @@ export class ToolPrompts {
     WORKFLOW: read_domain (state machine)
     Steps: ask_display_name → ask_query → fetch_domain → generate_answer → log_query
     ${ToolPrompts.RULES}
-    1) If display_name is not provided, use ask_display_name step — show available domains and let the user pick one.
+    1) If display_name is not provided, use ask_di  splay_name step — show available domains in options and let the user pick one, if their is just one or two options available. Show the display_name options anyways
     2) Even if display_name is guessed, confirm it with the user by using the list_domains tool (domains column exists as a safe URL for the display name), then use ask_query step if query is not provided — ask the user what they want to know.
     3) Once both display_name and query are known, call fetch_domain — tool fetches chunks and domain context server-side and returns immediately.
     4) fetch_domain returns right away — call this tool again immediately (no user interaction) to proceed to generate_answer.

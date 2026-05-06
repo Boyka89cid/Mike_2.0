@@ -140,7 +140,7 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
                     if (isSame) {
                         await client
                             .from("query_log")
-                            .update({ frequency: candidate.frequency + 1, asked_at: new Date().toISOString() })
+                            .update({ frequency: (candidate.frequency ?? 0) + 1, asked_at: new Date().toISOString() })
                             .eq("id", candidate.id);
                         return;
                     }
@@ -395,7 +395,7 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
             .from("query_log")
             .select("question, frequency, asked_at")
             .eq("exec_id", exec_id)
-            .order("frequency", { ascending: false })
+            .order("frequency", { ascending: false, nullsFirst: false })
             .limit(limit);
         if (error) throw error;
         return data ?? [];

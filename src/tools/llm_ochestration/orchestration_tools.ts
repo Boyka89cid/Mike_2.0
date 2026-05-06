@@ -61,7 +61,7 @@ class OrchestrationTools {
       return {
         status: "success",
         total: faqs.length,
-        questions: faqs.map((f, i) => ({ rank: i + 1, question: f.question, frequency: f.frequency })),
+        questions: faqs.map((f, i) => ({ rank: i + 1, question: f.question, frequency: f.frequency ?? 1 })),
       };
     } catch (e: any) {
       return { status: "error", message: `Failed to fetch frequently asked questions: ${e.message}` };
@@ -92,6 +92,7 @@ class OrchestrationTools {
   }
 
   async answer_domain_questions(session_state: AddContentSessionState): Promise<Record<string, any>> {
+    
     if (!session_state?.session_id) {
       return {
         status: "error",
@@ -385,6 +386,20 @@ class OrchestrationTools {
     }
 
     if (session.step === ReadDomainSteps.GENERATE) {
+      const hasChunks = (session.fetched_chunks ?? []).length > 0;
+
+      if (!hasChunks && !session.logged_without_chunks) {
+        await this.helper.log_query(
+          this.adapter,
+          globalState.executive_name!,
+          session.query!,
+          "",
+          [],
+        );
+        session.logged_without_chunks = true;
+        READ_DOMAIN_SESSIONS[session_state.session_id] = session;
+      }
+
       return {
         session_id: session.session_id,
         status: ReadDomainSteps.GENERATE,
@@ -402,14 +417,15 @@ class OrchestrationTools {
 
     if (session.step === ReadDomainSteps.LOG_QUERY) {
       delete READ_DOMAIN_SESSIONS[session_state.session_id];
-      await this.helper.log_query(
-        this.adapter,
-        globalState.executive_name!,
-        session.query!,
-        session.response!,
-        (session.fetched_chunks ?? []).map((c: any) => c.id),
-        
-      );
+      if (!session.logged_without_chunks) {
+        await this.helper.log_query(
+          this.adapter,
+          globalState.executive_name!,
+          session.query!,
+          session.response!,
+          (session.fetched_chunks ?? []).map((c: any) => c.id),
+        );
+      }
       return {
         session_id: session.session_id,
         status: ReadDomainSteps.LOG_QUERY,

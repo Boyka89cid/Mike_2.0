@@ -16,6 +16,7 @@ export type ReadDomainSessionState = {
   fetched_domain_context?: Record<string, any>; // stored server-side between FETCH and GENERATE
   response?: string;
   chunks_used?: string[];
+  logged_without_chunks?: boolean; // true when question was already logged in GENERATE (no-chunks path)
 };
 
 export type CreateDomainSessionState = {

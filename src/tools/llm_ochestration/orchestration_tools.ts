@@ -61,7 +61,7 @@ class OrchestrationTools {
       return {
         status: "success",
         total: faqs.length,
-        questions: faqs.map((f, i) => ({ rank: i + 1, question: f.question, frequency: f.frequency ?? 1 })),
+        questions: faqs.map((f, i) => ({ rank: i + 1, question: f.question, answer: f.response, frequency: f.frequency ?? 1 })),
       };
     } catch (e: any) {
       return { status: "error", message: `Failed to fetch frequently asked questions: ${e.message}` };
@@ -369,19 +369,28 @@ class OrchestrationTools {
         };
       }
 
-      const [domainContext, chunks] = await Promise.all([
-        this.helper.read_domain(this.adapter, exec_id, domain_slug),
-        this.helper.search_domain_chunks(this.adapter, exec_id, domain_slug, session.query!),
-      ]);
+      let chunks: Record<string, any>[] = [];
+      let chunkError: string | undefined;
+      const domainContext = await this.helper.read_domain(this.adapter, exec_id, domain_slug);
+      try {
+        chunks = await this.helper.search_domain_chunks(this.adapter, exec_id, domain_slug, session.query!);
+      } catch (e: any) {
+        chunkError = e?.message ?? String(e);
+      }
 
-      session.fetched_chunks = chunks.filter((c: any) => c.content?.trim());
+      const answeredChunks = chunks.filter((c: any) => c.content?.trim());
+      session.fetched_chunks = answeredChunks;
       session.fetched_domain_context = domainContext;
       READ_DOMAIN_SESSIONS[session_state.session_id] = session;
 
       return {
         session_id: session.session_id,
         status: ReadDomainSteps.FETCH,
-        message: "Data fetched. Call this tool again immediately to proceed to generate_answer.",
+        chunks_found: answeredChunks.length,
+        ...(chunkError && { chunk_search_error: chunkError }),
+        message: chunkError
+          ? `Chunk search failed: ${chunkError}. Call this tool again to proceed with domain context only.`
+          : "Data fetched. Call this tool again immediately to proceed to generate_answer.",
       };
     }
 
@@ -410,7 +419,7 @@ class OrchestrationTools {
           example_questions: session.fetched_domain_context?.example_questions ?? [],
           extra_details: session.fetched_domain_context?.extra_details ?? [],
         },
-        retrieved_chunks: (session.fetched_chunks ?? []).map((c: any, i: number) => ({ index: i + 1, content: c.content })),
+        retrieved_chunks: (session.fetched_chunks ?? []).map((c: any, i: number) => ({ index: i + 1, question: c.question, content: c.content })),
         instruction: "Generate a comprehensive answer to the query using domain_context and retrieved_chunks. Answer in the executive's voice — confident, first-person, direct. Ground every claim in the retrieved knowledge. If the retrieved knowledge does not contain enough to answer, say so clearly. After presenting the answer, call this tool again with your response text.",
       };
     }

@@ -1,10 +1,13 @@
 import { GenerationPrompts } from "./generation_prompts.ts";
 
 export class QuestionWithTags {
-  constructor(
-    public question: string,
-    public tags: string[] = [],
-  ) {}
+  question: string;
+  tags: string[];
+
+  constructor(question: string, tags: string[] = []) {
+    this.question = question;
+    this.tags = tags;
+  }
 
   static from(raw: { question: string; tags?: string[] }): QuestionWithTags {
     return new QuestionWithTags(raw.question, [...(raw.tags ?? [])]);

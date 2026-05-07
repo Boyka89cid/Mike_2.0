@@ -138,9 +138,11 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
                 for (const candidate of candidates) {
                     const isSame = await OpenAIHelpers.isSameQuestion(question, candidate.question);
                     if (isSame) {
+                        const updatePayload: Record<string, any> = { frequency: (candidate.frequency ?? 0) + 1, asked_at: new Date().toISOString() };
+                        if (response?.trim()) updatePayload.response = response;
                         await client
                             .from("query_log")
-                            .update({ frequency: (candidate.frequency ?? 0) + 1, asked_at: new Date().toISOString() })
+                            .update(updatePayload)
                             .eq("id", candidate.id);
                         return;
                     }
@@ -184,22 +186,16 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
         domain_slug: string,
         query: string
     ): Promise<Record<string, any>[]> {
-        try {
-            const queryEmbedding = await new EmbeddingAdapter().generateEmbedding(query);
-
-            const client = supabaseAdapter.getClient();
-            const { data, error } = await client.rpc("match_exec_knowledge", {
-                query_embedding: queryEmbedding,  // matched against exec_knowledge.embedding (content's vector)
-                p_exec_id: exec_id,
-                p_domain: domain_slug,
-                p_count: 10,
-            });
-
-            if (error) throw error;
-            return data ?? [];
-        } catch {
-            return [];
-        }
+        const queryEmbedding = await new EmbeddingAdapter().generateEmbedding(query);
+        const client = supabaseAdapter.getClient();
+        const { data, error } = await client.rpc("match_exec_knowledge", {
+            p_query_embedding: queryEmbedding,
+            p_exec_id: exec_id,
+            p_domain: domain_slug,
+            p_count: 10,
+        });
+        if (error) throw error;
+        return data ?? [];
     }
 
     async create_exec_knowledge_seed_entries(
@@ -389,11 +385,11 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
         supabaseAdapter: SupabaseAdapter,
         exec_id: string,
         limit: number = 10,
-    ): Promise<{ question: string; frequency: number; asked_at: string }[]> {
+    ): Promise<{ question: string; response: string; frequency: number; asked_at: string }[]> {
         const client = supabaseAdapter.getClient();
         const { data, error } = await client
             .from("query_log")
-            .select("question, frequency, asked_at")
+            .select("question, response, frequency, asked_at")
             .eq("exec_id", exec_id)
             .order("frequency", { ascending: false, nullsFirst: false })
             .limit(limit);

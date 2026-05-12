@@ -1,4 +1,9 @@
 import { GenerationPrompts } from "./generation_prompts.ts";
+import type { SupabaseAdapter } from "../../adapter/supabase_adapter.ts";
+import type { SupabaseHelperFxns } from "../supabase_helper_fxns.ts";
+
+export const MAX_DOMAIN_QUESTIONS = 15;
+export const QUESTION_BATCH_SIZE = 3;
 
 export class QuestionWithTags {
   question: string;
@@ -115,6 +120,78 @@ export class OpenAIHelpers {
       throw new Error(`OpenAI API error: ${err}`);
     }
 
+    const json = (await response.json()) as { choices: { message: { content: string } }[] };
+    const text = json.choices[0]?.message?.content ?? "[]";
+    const jsonMatch = text.match(/\[[\s\S]*\]/);
+    const parsed: { question: string; tags?: string[] }[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+    return parsed.map(QuestionWithTags.from);
+  }
+
+  async generateAndStoreBatch(params: {
+    supabaseAdapter: SupabaseAdapter;
+    helper: SupabaseHelperFxns;
+    exec_id: string;
+    domain_slug: string;
+    display_name: string;
+  }): Promise<{ id: string; question: string; category: string }[] | null> {
+    const { supabaseAdapter, helper, exec_id, domain_slug, display_name } = params;
+
+    const total = await helper.count_domain_questions(supabaseAdapter, exec_id, domain_slug);
+    if (total >= MAX_DOMAIN_QUESTIONS) return null;
+
+    const [answeredQAs, domainData, unanswered] = await Promise.all([
+      helper.get_answered_questions(supabaseAdapter, exec_id, domain_slug),
+      helper.read_domain(supabaseAdapter, exec_id, domain_slug),
+      helper.get_unanswered_questions(supabaseAdapter, exec_id, domain_slug),
+    ]);
+
+    const existingQuestions = [
+      ...unanswered.map((q: any) => q.question),
+      ...answeredQAs.map((q: any) => q.question),
+    ];
+
+    const newQuestions = await this.generateFollowUpQuestions({
+      area_of_business: display_name,
+      covers: domainData?.description?.covers ?? [],
+      not_covers: domainData?.description?.not_covers ?? [],
+      answered_qas: answeredQAs.map((q: any) => ({ question: q.question, answer: q.content })),
+      existing_questions: existingQuestions,
+    });
+
+    const insertedIds = await Promise.all(
+      newQuestions.slice(0, QUESTION_BATCH_SIZE).map(q =>
+        helper.add_exec_question(supabaseAdapter, exec_id, domain_slug, q.question, "faq", q.tags)
+      )
+    );
+
+    // Return only the newly inserted questions — skipped questions stay in DB but must not appear in this batch
+    const allUnanswered = await helper.get_unanswered_questions(supabaseAdapter, exec_id, domain_slug);
+    const idSet = new Set(insertedIds);
+    return allUnanswered.filter((q: any) => idSet.has(q.id));
+  }
+
+  async generateFollowUpQuestions(params: {
+    area_of_business: string;
+    covers: string[];
+    not_covers: string[];
+    answered_qas: { question: string; answer: string }[];
+    existing_questions: string[];
+  }): Promise<QuestionWithTags[]> {
+    const apiKey = OpenAIHelpers.getApiKey();
+    const prompt = GenerationPrompts.generate_follow_up_questions(params);
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        max_tokens: 1024,
+        messages: [
+          { role: "system", content: GenerationPrompts.generate_additional_questions_system() },
+          { role: "user", content: prompt },
+        ],
+      }),
+    });
+    if (!response.ok) throw new Error(`OpenAI API error: ${await response.text()}`);
     const json = (await response.json()) as { choices: { message: { content: string } }[] };
     const text = json.choices[0]?.message?.content ?? "[]";
     const jsonMatch = text.match(/\[[\s\S]*\]/);

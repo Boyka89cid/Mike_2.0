@@ -3,6 +3,7 @@ import { SupabaseAdapter } from "../adapter/supabase_adapter.ts";
 import { SupabaseHelperFxns } from "./supabase_helper_fxns.ts";
 import { globalState } from "../index.ts";
 import { ToolPrompts } from "./llm_ochestration/tool_prompts.ts";
+import { TOOL_ANNOTATIONS } from "./llm_ochestration/tool_annotations.ts";
 
 export function registerRouterTools(mcp: McpServer) {
     const routerTools = new LLMRouterTools();
@@ -14,7 +15,14 @@ export function registerRouterTools(mcp: McpServer) {
           toolName,
           {
             description: (ToolPrompts as any)[toolName] ? (ToolPrompts as any)[toolName] : `No description available for ${toolName}`,
-            inputSchema: undefined, // You can define specific input schemas for each tool if needed
+            inputSchema: undefined,
+            annotations: TOOL_ANNOTATIONS[toolName] ?? {
+              title: toolName,
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: false,
+              openWorldHint: false,
+            },
           },
           async () => {
             const result = await (routerTools as any)[toolName]();

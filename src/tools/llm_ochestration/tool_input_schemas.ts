@@ -42,6 +42,24 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
   get_frequently_asked_questions: z.object({
     session_state: z.object({
       session_id: z.string(),
+      type_of_questions_needed: z.enum(["most_frequent_by_domain", "most_frequent_by_time", "most_frequent_overall"]).optional(),
+      domain_slug: z.string().optional(),
+    })
+  }),
+  read_eos_hierarchy: z.object({
+    session_state: z.object({
+      session_id: z.string(),
+      eos_level: z.enum(["ten_year", "three_year", "one_year", "quarterly_rock", "values", "context", "all"]).optional(),
+      focus: z.string().optional(),
+      response: z.string().optional(),
+    })
+  }),
+  update_eos_hierarchy: z.object({
+    session_state: z.object({
+      session_id: z.string(),
+      eos_level: z.enum(["ten_year", "three_year", "one_year", "quarterly_rock", "values", "context"]).optional(),
+      item_id: z.string().optional(),
+      updated_content: z.record(z.any()).optional(),
     })
   }),
   capture_eos_hierarchy: z.object({
@@ -74,13 +92,27 @@ const TOOL_SCHEMAS: Record<string, z.ZodTypeAny> = {
         deadline: z.string(),
         status: z.enum(["not_started", "in_progress", "done"]),
       })).optional(),
+      add_more_rocks: z.boolean().optional(),
       values: z.array(z.object({
         value: z.string(),
         description: z.string(),
         examples: z.array(z.string()),
       })).optional(),
+      add_more_values: z.boolean().optional(),
       functional_domains: z.array(z.string()).optional(),
       user_confirmation: z.boolean().optional(),
+    })
+  }),
+  update_domain_answers: z.object({
+    session_state: z.object({
+      session_id: z.string(),
+      step: z.string().optional(),
+      query: z.string().optional(),
+      matched_id: z.string().optional(),
+      matched_question: z.string().optional(),
+      matched_domain: z.string().optional(),
+      current_answer: z.string().optional(),
+      new_answer: z.string().optional(),
     })
   }),
 };

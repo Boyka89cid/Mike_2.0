@@ -39,14 +39,50 @@ export const AddContentSteps = {
 export type AddContentSteps = (typeof AddContentSteps)[keyof typeof AddContentSteps];
 
 export const CaptureEosHierarchySteps = {
-  ASK_TEN_YEAR_TARGET:   "ask_ten_year_target",
+  ASK_TEN_YEAR_TARGET:    "ask_ten_year_target",
   ASK_THREE_YEAR_PICTURE: "ask_three_year_picture",
-  ASK_ONE_YEAR_PLAN:     "ask_one_year_plan",
-  ASK_QUARTERLY_ROCKS:   "ask_quarterly_rocks",
-  ASK_VALUES:            "ask_values",
+  ASK_ONE_YEAR_PLAN:      "ask_one_year_plan",
+  ASK_QUARTERLY_ROCKS:    "ask_quarterly_rocks",
+  ASK_MORE_ROCKS:         "ask_more_rocks",
+  ASK_VALUES:             "ask_values",
+  ASK_MORE_VALUES:        "ask_more_values",
   ASK_FUNCTIONAL_DOMAINS: "ask_functional_domains",
-  USER_CONFIRMATION:     "user_confirmation",
-  INSERT:                "insert",          // storage destination TBD
+  USER_CONFIRMATION:      "user_confirmation",
+  INSERT:                 "insert",
 } as const;
 
 export type CaptureEosHierarchySteps = (typeof CaptureEosHierarchySteps)[keyof typeof CaptureEosHierarchySteps];
+
+export const GetFrequentlyAskedQuestionsSteps = {
+  ASK_TYPE_OF_QUESTIONS_NEEDED: "ask_type_of_questions_needed",
+  FETCH_QUESTIONS: "fetch_questions",
+  SUMMARIZE_QUESTIONS_WITH_ANSWERS: "summarize_questions_with_answers",
+  DISPLAY_TOP_3_QUESTIONS_WITH_FREQUENCY: "display_top_3_questions_with_frequency",
+} as const;
+
+export const ReadEosHierarchySteps = {
+  ASK_LEVEL:  "ask_level",
+  ASK_FOCUS:  "ask_focus",
+  FETCH:      "fetch",
+  LOG_QUERY:  "log_query",
+} as const;
+
+export type ReadEosHierarchySteps = (typeof ReadEosHierarchySteps)[keyof typeof ReadEosHierarchySteps];
+
+export const UpdateEosHierarchySteps = {
+  ASK_LEVEL:     "ask_level",
+  FETCH_CURRENT: "fetch_current",
+  ASK_UPDATE:    "ask_update",
+  UPDATE:        "update",
+} as const;
+
+export type UpdateEosHierarchySteps = (typeof UpdateEosHierarchySteps)[keyof typeof UpdateEosHierarchySteps];
+
+export const UpdateDomainAnswersSteps = {
+  ASK_QUESTION:    "ask_question",
+  SEARCH:          "search",
+  CONFIRM_MATCH:   "confirm_match",
+  UPDATE_ANSWER:   "update_answer",
+} as const;
+
+export type UpdateDomainAnswersSteps = (typeof UpdateDomainAnswersSteps)[keyof typeof UpdateDomainAnswersSteps];

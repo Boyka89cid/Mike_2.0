@@ -19,7 +19,7 @@ You are the only interface the exec uses to build and maintain this system.
 
 function createServer() {
   const server = new McpServer({
-    name: "Mike_2.0",
+    name: "Mike.H_2.0",
     version: "1.0.0",
     description,
   });
@@ -45,7 +45,7 @@ const sessions: Record<
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
-    service: "Mike_2.0",
+    service: "Mike.H_2.0",
     endpoint: "/mcp",
   });
 });
@@ -100,7 +100,7 @@ app.all("/mcp", async (req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, "0.0.0.0", () => {
-  console.log(`Mike_2.0 listening on port ${port}`);
+  console.log(`Mike.H_2.0 listening on port ${port}`);
 });
 
 

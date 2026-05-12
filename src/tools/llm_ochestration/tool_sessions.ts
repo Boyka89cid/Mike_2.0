@@ -4,8 +4,6 @@ export type ListDomainsSessionState = {
   step?: string;
 };
 
-
-
 export type ReadDomainSessionState = {
   session_id: string;
   step?: string;
@@ -45,6 +43,16 @@ export type AddContentSessionState = {
   mark_irrelevant?: boolean;
   skip_question?: boolean;
 };
+
+export type GetFrequentlyAskedQuestionsSessionState = {
+  session_id: string;
+  step?: string;
+  type_of_questions_needed?: "most_frequent_by_domain" | "most_frequent_by_time" | "most_frequent_overall";
+  domain_slug?: string;
+  top_questions?: { question: string; response: string; frequency: number; asked_at: string }[];
+  summarized?: boolean;
+};
+
 
 // ─── EOS Knowledge Hierarchy ─────────────────────────────────────────────────
 
@@ -89,13 +97,50 @@ export type CaptureEosHierarchySessionState = {
   step?: string;
   ten_year_target?: EosTenYearTarget;
   three_year_picture?: EosThreeYearPicture;
-  one_year_plans?: EosOneYearPlan[];       // multiple entries allowed
+  one_year_plans?: EosOneYearPlan[];
   quarterly_rocks?: EosQuarterlyRock[];
+  add_more_rocks?: boolean;
   values?: EosValue[];
-  functional_domains?: string[];           // just domain names
+  add_more_values?: boolean;
+  functional_domains?: string[];
   user_confirmation?: boolean;
+};
+
+// Server-only — never returned to LLM, accumulates each level as it is captured
+export type CaptureEosHierarchyServerState = {
+  captured_ten_year?: EosTenYearTarget;
+  captured_three_year?: EosThreeYearPicture;
+  captured_one_year?: EosOneYearPlan[];
+  captured_quarterly_rocks?: EosQuarterlyRock[];
+  captured_values?: EosValue[];
+  captured_functional_domains?: string[];
 };
 
 export type FrequentlyAskedQuestionsSessionState = {
   session_id: string;
+};
+
+export type ReadEosHierarchySessionState = {
+  session_id: string;
+  eos_level?: "ten_year" | "three_year" | "one_year" | "quarterly_rock" | "values" | "context" | "all";
+  focus?: string;
+  response?: string;
+};
+
+export type UpdateEosHierarchySessionState = {
+  session_id: string;
+  eos_level?: "ten_year" | "three_year" | "one_year" | "quarterly_rock" | "values" | "context";
+  item_id?: string;       // ID of the eos_items row being updated
+  updated_content?: any;  // new content provided by the user
+};
+
+export type UpdateDomainAnswersSessionState = {
+  session_id: string;
+  step?: string;
+  query?: string;            // the question/topic the user wants to update
+  matched_id?: string;       // exec_knowledge row id of the best match
+  matched_question?: string; // the matched question text
+  matched_domain?: string;   // the domain slug of the match
+  current_answer?: string;   // existing answer in the DB
+  new_answer?: string;       // updated answer provided by user
 };

@@ -1059,6 +1059,14 @@ class OrchestrationTools {
     }
 
     // user_confirmation === true — insert all into eos_items
+    const hasData = server.captured_ten_year || server.captured_three_year ||
+      server.captured_one_year?.length || server.captured_quarterly_rocks?.length ||
+      server.captured_values?.length || server.captured_functional_domains?.length;
+    if (!hasData) {
+      delete CAPTURE_EOS_SERVER_STATE[sid];
+      delete CAPTURE_EOS_HIERARCHY_SESSIONS[sid];
+      return { session_id: sid, status: "error", message: "No captured data found for this session. The server may have restarted — please go through the full workflow again from the 10-year target." };
+    }
     const alreadyComplete = await this.helper.eos_hierarchy_complete(this.adapter, exec_id);
     if (alreadyComplete) {
       delete CAPTURE_EOS_SERVER_STATE[sid];

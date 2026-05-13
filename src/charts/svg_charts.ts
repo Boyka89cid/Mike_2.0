@@ -1,7 +1,6 @@
 export function generateDomainHealthChart(
   domains: { domain_slug: string; answered: number; unanswered: number; chunk_count: number; is_thin: boolean }[]
 ): string {
-  const THIN_THRESHOLD = 5;
   const maxLabelLen = Math.max(...domains.map(d => d.domain_slug.length), 4);
   const bottomMargin = Math.max(90, Math.ceil(maxLabelLen * 5.2) + 30);
   const W = 620, H = 340 + bottomMargin;
@@ -30,13 +29,6 @@ export function generateDomainHealthChart(
     <text x="${x + barW / 2}" y="${m.top + cH + 18}" text-anchor="middle" font-size="10" fill="${d.is_thin ? '#ef4444' : '#6b7280'}">${d.domain_slug.length > 13 ? d.domain_slug.slice(0, 12) + '…' : d.domain_slug}</text>`;
   }).join('');
 
-  // Thin domain threshold line
-  const thresholdY = m.top + cH - (THIN_THRESHOLD / maxTotal) * cH;
-  const thresholdLine = maxTotal >= THIN_THRESHOLD
-    ? `<line x1="${m.left}" y1="${thresholdY}" x2="${W - m.right}" y2="${thresholdY}" stroke="#ef4444" stroke-width="1" stroke-dasharray="4 3"/>
-       <text x="${W - m.right + 4}" y="${thresholdY + 4}" font-size="9" fill="#ef4444">thin</text>`
-    : '';
-
   const legendY = H - 18;
   const legend = [
     ['#22c55e', 'Answered'], ['#ef4444', 'Unanswered'], ['#ef4444', 'Thin domain name'],
@@ -48,7 +40,6 @@ export function generateDomainHealthChart(
   <text x="${W / 2}" y="26" text-anchor="middle" font-size="14" font-weight="bold" fill="#111827">Domain Health — Answered vs Unanswered</text>
   ${yAxis}
   <line x1="${m.left}" y1="${m.top}" x2="${m.left}" y2="${m.top + cH}" stroke="#d1d5db" stroke-width="1"/>
-  ${thresholdLine}
   ${bars}
   ${legend}
   </svg>`;

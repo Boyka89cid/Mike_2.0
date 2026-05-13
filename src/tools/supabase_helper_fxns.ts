@@ -483,14 +483,20 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
             else counts[slug].unanswered++;
         }
 
-        const health = (domains ?? []).map((d: any) => ({
-            domain_slug: d.domain_slug,
-            display_name: d.display_name,
-            chunk_count: d.chunk_count ?? 0,
-            answered: counts[d.domain_slug]?.answered ?? 0,
-            unanswered: counts[d.domain_slug]?.unanswered ?? 0,
-            is_thin: (d.chunk_count ?? 0) < 5,
-        })).sort((a: any, b: any) => b.unanswered - a.unanswered);
+        const health = (domains ?? []).map((d: any) => {
+            const answered = counts[d.domain_slug]?.answered ?? 0;
+            const unanswered = counts[d.domain_slug]?.unanswered ?? 0;
+            const total = answered + unanswered;
+            const is_thin = total > 0 && (answered / total) < 0.25;
+            return {
+                domain_slug: d.domain_slug,
+                display_name: d.display_name,
+                chunk_count: d.chunk_count ?? 0,
+                answered,
+                unanswered,
+                is_thin,
+            };
+        }).sort((a: any, b: any) => b.unanswered - a.unanswered);
 
         const thin_domains = health.filter((d: any) => d.is_thin);
         const bottom5 = health.slice(0, 5);

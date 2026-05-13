@@ -4,6 +4,7 @@ import { SupabaseHelperFxns } from "./supabase_helper_fxns.ts";
 import { globalState } from "../index.ts";
 import { ToolPrompts } from "./llm_ochestration/tool_prompts.ts";
 import { TOOL_ANNOTATIONS } from "./llm_ochestration/tool_annotations.ts";
+import { generateDomainBreakdownChart, generateDomainHealthChart } from "../charts/svg_charts.ts";
 
 export function registerRouterTools(mcp: McpServer) {
     const routerTools = new LLMRouterTools();
@@ -26,15 +27,11 @@ export function registerRouterTools(mcp: McpServer) {
           },
           async () => {
             const result = await (routerTools as any)[toolName]();
-          return {
-            content: [
-              {
-                type: "text",
-                text: typeof result === "string" ? result : JSON.stringify(result)
-              }
-            ]
-          };
-        }
+            if (result?._mcpContent) return { content: result._mcpContent };
+            return {
+              content: [{ type: "text", text: typeof result === "string" ? result : JSON.stringify(result) }]
+            };
+          }
         );
       }
 }
@@ -60,7 +57,46 @@ class LLMRouterTools {
   }
 
   // We don't need the sessionState: ListDomainsSessionState a parameter for list_domains because we are only supporting one executive per server instance for now, so we can get the exec_name directly from globalState.
+  async get_domain_health(): Promise<Record<string, any>> {
+    try {
+      const { health, thin_domains, bottom5 } = await this.helper.get_domain_health(this.adapter, globalState.executive_name!);
+      const svg = generateDomainHealthChart(bottom5);
+      const thin_alerts = (thin_domains as any[]).map((d: any) =>
+        `Your ${d.display_name} domain only has ${d.chunk_count} ${d.chunk_count === 1 ? "entry" : "entries"} — want to add more next time we talk?`
+      );
+      return {
+        _mcpContent: [
+          { type: "text", text: svg },
+          { type: "text", text: JSON.stringify({ bottom5_by_unanswered: bottom5, thin_alerts, total_domains: (health as any[]).length }) },
+        ],
+      };
+    } catch (e: any) {
+      return { status: "error", message: `Error fetching domain health: ${e.message}` };
+    }
+  }
+
   // We can add sessionState as a parameter and implement a more complex state machine for handling multiple executives in the future if needed.
+  async get_domain_analytics(): Promise<Record<string, any>> {
+    try {
+      const { breakdown } = await this.helper.get_domain_breakdown(this.adapter, globalState.executive_name!);
+      const EXCLUDED = new Set(["eos_hierarchy", "unknown"]);
+      const top5 = (breakdown as any[])
+        .filter(d => !EXCLUDED.has(d.domain_slug))
+        .slice(0, 5);
+      const most_asked = top5[0]?.domain_slug ?? null;
+      const weakest = [...top5].sort((a, b) => a.avg_kb_chunks_per_query - b.avg_kb_chunks_per_query)[0]?.domain_slug ?? null;
+      const svg = generateDomainBreakdownChart(top5, most_asked, weakest);
+      return {
+        _mcpContent: [
+          { type: "text", text: svg },
+          { type: "text", text: JSON.stringify({ most_asked, weakest, breakdown: top5 }) },
+        ],
+      };
+    } catch (e: any) {
+      return { status: "error", message: `Error fetching domain analytics: ${e.message}` };
+    }
+  }
+
    async list_domains(): Promise<Record<string, any>> {
     try {
           const exec_name = globalState.executive_name!;

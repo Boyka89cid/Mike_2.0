@@ -86,4 +86,20 @@ export const TOOL_ANNOTATIONS: Record<string, any> = {
     idempotentHint: true,
     openWorldHint: false,
   },
+
+  get_domain_health: {
+    title: "Get Domain Health",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+
+  get_domain_analytics: {
+    title: "Get Domain Analytics",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
 };

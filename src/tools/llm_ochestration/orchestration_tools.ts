@@ -214,7 +214,9 @@ class OrchestrationTools {
 
     if (session.response) {
       delete READ_EOS_HIERARCHY_SESSIONS[sid];
-      const question = `Show me the ${session.eos_level!.replace(/_/g, " ")}${session.focus && session.focus !== "full picture" ? ` — ${session.focus}` : ""}`;
+      const question = session.eos_level === "all"
+        ? "Show me the full EOS hierarchy"
+        : `Show me the ${session.eos_level!.replace(/_/g, " ")}${session.focus && session.focus !== "full picture" ? ` — ${session.focus}` : ""}`;
       await this.helper.log_query(this.adapter, exec_id, question, session.response, "eos_hierarchy", []);
       return { session_id: sid, status: ReadEosHierarchySteps.LOG_QUERY, message: "Query and response logged successfully." };
     }

@@ -14,6 +14,8 @@ export class ToolPrompts {
 
     static get list_domains() { return `Fetch the list of domains for executive: '${globalState.executive_name}' \n${ToolPrompts.RULES}`; }
     static check_supabase_connection = `Check the connection to the Supabase database by running a test query. \n${ToolPrompts.RULES}`;
+    static get_domain_health = `Fetch a health report for all domains — how many questions are answered vs unanswered per domain, which domains are thin (fewer than 5 active entries), and the bottom 5 domains ranked by most unanswered questions. Returns a stacked bar chart (green = answered, red = unanswered, red label = thin domain) and a JSON summary. Render the SVG as an artifact. Then surface each thin_alert message verbatim to the executive. Finally recommend adding content to the domains with the most unanswered questions. \n${ToolPrompts.RULES}`;
+    static get_domain_analytics = `Fetch a visual breakdown of query activity across all domains — how many queries hit each domain, which domain was asked most, and which domain had the weakest knowledge coverage (fewest KB chunks retrieved on average). Returns a raw SVG string and a JSON summary. Render the SVG as an artifact so the user sees the bar chart, then call out the most_asked and weakest domains explicitly from the JSON. \n${ToolPrompts.RULES}`;
 
     static read_domain_workflow = `
     WORKFLOW: read_domain (state machine)

@@ -433,6 +433,71 @@ import { OpenAIHelpers } from "./llm_ochestration/openai_helpers.ts";
             .filter(Boolean) as { id: string; question: string; content: string; domain: string; similarity: number }[];
     }
 
+    async get_domain_breakdown(supabaseAdapter: SupabaseAdapter, exec_id: string): Promise<Record<string, any>> {
+        const client = supabaseAdapter.getClient();
+        const { data, error } = await client
+            .from("query_log")
+            .select("domain_slug, frequency, chunks_used")
+            .eq("exec_id", exec_id);
+        if (error) throw error;
+
+        const map: Record<string, { query_count: number; total_asks: number; total_real_chunks: number }> = {};
+        for (const row of data ?? []) {
+            const slug = row.domain_slug ?? "unknown";
+            if (!map[slug]) map[slug] = { query_count: 0, total_asks: 0, total_real_chunks: 0 };
+            map[slug].query_count += 1;
+            map[slug].total_asks += row.frequency ?? 1;
+            // Only count real KB chunks (UUIDs), not synthetic desc_ chunks
+            const realChunks = (row.chunks_used ?? []).filter((id: string) => !id.startsWith("desc_"));
+            map[slug].total_real_chunks += realChunks.length;
+        }
+
+        const breakdown = Object.entries(map).map(([domain_slug, s]) => ({
+            domain_slug,
+            unique_queries: s.query_count,
+            total_asks: s.total_asks,
+            avg_kb_chunks_per_query: s.query_count > 0 ? Math.round((s.total_real_chunks / s.query_count) * 10) / 10 : 0,
+        })).sort((a, b) => b.total_asks - a.total_asks);
+
+        const most_asked = breakdown[0]?.domain_slug ?? null;
+        const weakest = [...breakdown].sort((a, b) => a.avg_kb_chunks_per_query - b.avg_kb_chunks_per_query)[0]?.domain_slug ?? null;
+
+        return { breakdown, most_asked, weakest };
+    }
+
+    async get_domain_health(supabaseAdapter: SupabaseAdapter, exec_id: string): Promise<Record<string, any>> {
+        const client = supabaseAdapter.getClient();
+
+        const [{ data: domains, error: dErr }, { data: knowledge, error: kErr }] = await Promise.all([
+            client.from("knowledge_domains").select("domain_slug, display_name, chunk_count").eq("exec_id", exec_id),
+            client.from("exec_knowledge").select("domain, content").eq("exec_id", exec_id),
+        ]);
+        if (dErr) throw dErr;
+        if (kErr) throw kErr;
+
+        const counts: Record<string, { answered: number; unanswered: number }> = {};
+        for (const row of knowledge ?? []) {
+            const slug = row.domain ?? "unknown";
+            if (!counts[slug]) counts[slug] = { answered: 0, unanswered: 0 };
+            if (row.content?.trim()) counts[slug].answered++;
+            else counts[slug].unanswered++;
+        }
+
+        const health = (domains ?? []).map((d: any) => ({
+            domain_slug: d.domain_slug,
+            display_name: d.display_name,
+            chunk_count: d.chunk_count ?? 0,
+            answered: counts[d.domain_slug]?.answered ?? 0,
+            unanswered: counts[d.domain_slug]?.unanswered ?? 0,
+            is_thin: (d.chunk_count ?? 0) < 5,
+        })).sort((a: any, b: any) => b.unanswered - a.unanswered);
+
+        const thin_domains = health.filter((d: any) => d.is_thin);
+        const bottom5 = health.slice(0, 5);
+
+        return { health, thin_domains, bottom5 };
+    }
+
     async eos_hierarchy_complete(
         supabaseAdapter: SupabaseAdapter,
         exec_id: string
